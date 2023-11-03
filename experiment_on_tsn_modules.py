@@ -285,8 +285,8 @@ def solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, in
     flow_arc_mgcp_imp = deepcopy(init_flow_arc)
     flow_comarc_mgcp_imp = deepcopy(init_flowcom_arc)
     mgcpsolver = tsmd.MarginalCostPathSolver(network, flow_arc_mgcp_imp, flow_comarc_mgcp_imp, init_alpha)
-    mgcp_iter, mgcp_runtime = mgcpsolver.mgcp_single_lane_improvement_with_time_limit(time_limit,
-                                                                                      lane_selection_mode=lane_selection_mode,
+    mgcp_iter, mgcp_runtime = mgcpsolver.mgcp_single_lane_improvement_with_time_limit(time_limit * 4,
+                                                                                      lane_selection_mode = lane_selection_mode,
                                                                                       reflow_mode = reflow_mode)
     it_cost,is_cost = mgcpsolver.get_obj(init_flow_arc)
     init_obj = it_cost+is_cost
