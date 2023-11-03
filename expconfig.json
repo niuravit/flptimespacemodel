@@ -1,0 +1,28 @@
+{
+    "data": {
+        "instance_path": "instances/multicommodity-timespace-instances/",
+        "module_path": "../"
+    },
+    "model": {
+        "handling_cost": 0.19312941,
+        "trailer_cap": 2000,
+        "service_types": "1D,2D,3D,GND" ,
+        "num_days": 7,
+        "periods_per_day": 4,
+        "velocity": 54,
+        "simplified_sort_label": {
+            "1": {
+                "boh":3, "eoh":7
+            },
+            "2": {
+                "boh":11, "eoh":15
+            },
+            "3": {
+                "boh":17, "eoh":21
+            },
+            "4": {
+                "boh":23, "eoh":27
+            }
+        }
+    }
+}
