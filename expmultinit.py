@@ -142,6 +142,13 @@ class experiment_configuration:
                 rearrange_col += imp_re_col
         return rearrange_col
 
+def create_folder_if_not_exist(folder):
+    if not os.path.exists(folder):
+        # If it doesn't exist, create the folder
+        os.makedirs(folder)
+        print(f"Folder '{folder}' created.")
+    else:
+        print(f"Folder '{folder}' already exists.")
 
 # read configurations
 exp_config = experiment_configuration(sys.argv)
@@ -175,8 +182,13 @@ json_output_name = f"{result_file_name}-jsonconfig"
 print(result_file_name)
 log_collection = dict()
 result_folder = "playgrounddump/"
-plt.figure(2)
+plot_folder = "plots/"
 
+# create result and plot folders
+create_folder_if_not_exist(result_folder)
+create_folder_if_not_exist(plot_folder)
+
+plt.figure(2)
 for i in instance_id_list:
     print(f'Staring fixInstanceExperiment... instance {inst_size}n id {i}')
     i_log = exp.fixInstanceExperiment(inst_list[i:i+1], constant_dict, initialization_list, imp_heuristics_list, 
@@ -187,7 +199,7 @@ for i in instance_id_list:
     # arrange col before save as .csv
     rearrange_col = exp_config.get_rearrange_col_log()
     result_tab[rearrange_col].to_csv(result_folder+result_file_name+".csv")
-    plt.savefig(f'plots/scobjplots_inst{i}-{inst_size}n-{time_lim}tl-{time_stamp}{name_suff}.png',bbox_inches='tight')
+    plt.savefig(f'{plot_folder}scobjplots_inst{i}-{inst_size}n-{time_lim}tl-{time_stamp}{name_suff}.png',bbox_inches='tight')
 plt.close()
 # recording the json-config 
 exp_config.export_json_configs(result_folder+json_output_name)
