@@ -539,16 +539,25 @@ class MarginalCostPathSolver:
         plt.figure(3)
         iter_log = self.logobjval
         plt.figure(3,bbox_inches='tight')
+
+        random.seed(len(iter_log))
         line_color = random.choice(COLOR_PALETTE)  # Random hexadecimal color
 
+        if "grasp" in self.init_proc_text:
+            line_stl = "-"
+            # m = 'x'
+        else:
+            line_stl = "--"
+            # m = 'o'
+
         se_afmgcp_cost = pd.Series(iter_log.values())
-        plt.plot(se_afmgcp_cost, color=line_color,label=f"{self.init_proc_text}-mgcp-imp-obj")
+        plt.plot(se_afmgcp_cost, color=line_color, linestyle = line_stl,label=f"{self.init_proc_text}-obj")
         plt.legend(loc="upper left", bbox_to_anchor=(1,1))
         plt.xlabel("iterations",  size = 20)
         plt.ylabel("obj", size = 20)     
         # plt.show()
     
-    def _arrange_dc_for_reflow(self, dc_flow_removed, mode="volume_based", num_replication = 4, shuffling_ele = 5):
+    def _arrange_dc_for_reflow(self, dc_flow_removed, mode="volume_based", num_replication = 4, shuffling_ele = 3):
         if (mode=="volume_based"):
             sorted_volume_based_dc = sorted(dc_flow_removed.items(), key=lambda x:x[1], reverse=True)
         elif (mode=="grasp"):
@@ -658,7 +667,7 @@ class MarginalCostPathSolver:
             feasible_choices = self.marginal_cost_path(f,dc,ots_node,(None,None,None),flow_arc,flowcom_arc,intree = True,mode = "I")
             if (len(feasible_choices) == 0): # no feasible path, delete this demand from origin
                  raise Exception("Cannot put flow back, something wrong!")
-            # get cheapest choice
+            # get cheapest choice of all feasible paths
             (_, (path,label)) = sorted(feasible_choices.items(), key=lambda x:x[1][1])[0]
             cost_added+=label
             self.add_flow_to_path(f,dc,path,flow_arc,flowcom_arc)
@@ -1197,8 +1206,8 @@ class SlopeScalingSolver:
 
         se_roundup_cost = pd.Series([iter_log[i]['obj'] for i in range(0,len(iter_log)-1)])
         se_approx_cost = pd.Series([iter_log[i]['appcost'] for i in range(0,len(iter_log)-1)])
-        plt.plot(se_roundup_cost, color=line_color,label=f"ssp-{self.init_proc_text}-init-roundup-obj")
-        plt.plot(se_approx_cost, color=line_color,linestyle='--', label=f"spp-{self.init_proc_text}-init-approx-obj")
+        plt.plot(se_roundup_cost, color=line_color,label=f"{self.init_proc_text}-roundup-obj")
+        plt.plot(se_approx_cost, color=line_color,linestyle='--', label=f"{self.init_proc_text}-approx-obj")
         plt.legend(loc="upper left", bbox_to_anchor=(1,1))
         plt.xlabel("iterations",  size = 20)
         plt.ylabel("obj", size = 20)

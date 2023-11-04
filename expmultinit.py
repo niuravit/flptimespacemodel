@@ -29,6 +29,7 @@ class experiment_configuration:
             instance_list: list<int> specifying instance id
             initialization_list: list<strings> from mgcp, sp specifying the initilization method
             imp_heuristics_list: list<strings> from vol-mgcp, org_vol-mgcp, ssp, vol-mgcp_w_grasp,org_vol-mgcp_w_grasp, adssp specifying the heuristics method ,
+            demand_scaler: <int> constant positive factor to scale demand
             name_suff: <string> any name tag for the experiment
             e.g., >>> python3 expmultinit.py 12 300 all mgcp,sp mgcp,ssp testrun
             this command will run instance of size 12 nodes, each 300 s, for all 10 instances, 
@@ -40,6 +41,7 @@ class experiment_configuration:
         self.instance_list = None
         self.initialization_list = None
         self.imp_heuristics_list = None
+        self.demand_scaler = None
         self.name_suff = ""
         self.static_config = None
         
@@ -49,19 +51,21 @@ class experiment_configuration:
         
     def read_command_line_config(self,l, argv):
         print("reading configuration from command line...")
-        if l == 6:
+        if l == 7:
             self.inst_size = int(argv[1])
             self.time_lim = int(argv[2])
             self.instance_list = self.__parse_instance_list(argv[3])
             self.initialization_list = argv[4].split(',')
             self.imp_heuristics_list = argv[5].split(',')
-        elif l == 7:
+            self.demand_scaler = float(argv[6])
+        elif l == 8:
             self.inst_size = int(argv[1])
             self.time_lim = int(argv[2])
             self.instance_list = self.__parse_instance_list(argv[3])
             self.initialization_list = argv[4].split(',')
             self.imp_heuristics_list = argv[5].split(',')
-            self.name_suff = argv[6]
+            self.demand_scaler = float(argv[6])
+            self.name_suff = argv[7]
         else:
             raise Exception('invalid command, re-check the definition!')
             
@@ -70,6 +74,7 @@ class experiment_configuration:
         print(f"\t instance list:{self.instance_list}")
         print(f"\t initialization procedures:{self.initialization_list}")
         print(f"\t improving heuristics:{self.imp_heuristics_list}")
+        print(f"\t demand_scaler:{self.demand_scaler}")
         print(f"\t additional name suff:{self.name_suff}")
         
     def __parse_instance_list(self, inst_list_arg):
@@ -94,6 +99,7 @@ class experiment_configuration:
             "instance_list":self.instance_list,
             "initialization_list":self.initialization_list,
             "imp_heuristics_list":self.imp_heuristics_list,
+            "demand_scaler":self.demand_scaler,
             "name_suff":self.name_suff,
         }
         
@@ -112,7 +118,7 @@ class experiment_configuration:
         # obj set
         for init_idx in range(1,len(self.initialization_list)+1):
             init_proc = self.initialization_list[init_idx-1]
-            init_re_col = [f'init-{init_proc}-{init_idx}_{val}' for val in ['obj','tcost','scost','ud_avg']]
+            init_re_col = [f'init-{init_proc}-{init_idx}_{val}' for val in ['obj','tcost','scost']]
             rearrange_col += init_re_col
             
             for imp_idx in range(1,len(self.imp_heuristics_list)+1):
@@ -167,6 +173,7 @@ time_lim = exp_config.time_lim
 instance_id_list = exp_config.instance_list
 initialization_list = exp_config.initialization_list
 imp_heuristics_list = exp_config.imp_heuristics_list
+demand_scaler = exp_config.demand_scaler
 name_suff = exp_config.name_suff
 
 # option = 1
@@ -191,8 +198,8 @@ create_folder_if_not_exist(plot_folder)
 plt.figure(2)
 for i in instance_id_list:
     print(f'Staring fixInstanceExperiment... instance {inst_size}n id {i}')
-    i_log = exp.fixInstanceExperiment(inst_list[i:i+1], constant_dict, initialization_list, imp_heuristics_list, 
-                                      time_limit=time_lim,)
+    i_log = exp.fixInstanceExperiment(inst_list[i:i+1], i, constant_dict, initialization_list, imp_heuristics_list, 
+                                      time_limit=time_lim, demand_scaling_factor = demand_scaler)
     
     log_collection[i+1] = i_log[1]
     result_tab = pd.DataFrame(log_collection).T

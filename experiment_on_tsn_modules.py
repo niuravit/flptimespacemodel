@@ -280,17 +280,20 @@ def solveMultiHeuristicsFromSol(network, init_flow_arc, init_flowcom_arc, init_a
     ss_output = solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit)
     return mgcp_output, ss_output
 
-def solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit, lane_selection_mode = "vol", reflow_mode = "default"):
+def solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit, lane_selection_mode = "vol",
+                                     reflow_mode = "default", init_proc_text=""):
     # mgcp improving heuristics
     flow_arc_mgcp_imp = deepcopy(init_flow_arc)
     flow_comarc_mgcp_imp = deepcopy(init_flowcom_arc)
     mgcpsolver = tsmd.MarginalCostPathSolver(network, flow_arc_mgcp_imp, flow_comarc_mgcp_imp, init_alpha)
-    mgcp_iter, mgcp_runtime = mgcpsolver.mgcp_single_lane_improvement_with_time_limit(time_limit * 4,
+    # for plot labeling
+    mgcpsolver.init_proc_text = init_proc_text
+    mgcp_iter, mgcp_runtime = mgcpsolver.mgcp_single_lane_improvement_with_time_limit(time_limit ,
                                                                                       lane_selection_mode = lane_selection_mode,
                                                                                       reflow_mode = reflow_mode)
     it_cost,is_cost = mgcpsolver.get_obj(init_flow_arc)
     init_obj = it_cost+is_cost
-    mgcpt_cost,mcgps_cost = mgcpsolver.get_obj(flow_arc_mgcp_imp)
+    mgcpt_cost,mcgps_cost = mgcpsolver.get_obj(mgcpsolver.flow_arc)
     mgcp_obj = mgcpt_cost+mcgps_cost
     print(f'{reflow_mode} mcgp improving heuristic:{mgcp_obj}  (t{mgcpt_cost},s{mcgps_cost}), imp\%:{round(100*(mgcp_obj-init_obj)/(init_obj),2)}\%'+
           f' (t{round((mgcpt_cost-it_cost)*100/it_cost,2)}% , s{round((mcgps_cost-is_cost)*100/is_cost,2)}%)')
@@ -411,13 +414,15 @@ def runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit, init
     if (imp_proc == "mgcp"):
         # mgcp improving heuristics
         mgcp_output = solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit, 
-                                                      lane_selection_mode = lane_sel_mode ,reflow_mode = "default")
+                                                      lane_selection_mode = lane_sel_mode ,reflow_mode = "default", 
+                                                      init_proc_text = init_proc_text)
         (mgcp_obj,flow_arc_mgcp_imp,flow_comarc_mgcp_imp, mgcp_iter, mgcp_runtime) = mgcp_output
         return (flow_arc_mgcp_imp,flow_comarc_mgcp_imp,mgcp_iter,mgcp_runtime)
     elif (imp_proc == "mgcp_w_grasp"):
         # grasp mgcp improving heuristics 
-        mgcp_output = solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit,
-                                                      lane_selection_mode = lane_sel_mode, reflow_mode = "grasp")
+        mgcp_output = solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit * 4,
+                                                      lane_selection_mode = lane_sel_mode, reflow_mode = "grasp",
+                                                      init_proc_text = init_proc_text)
         (mgcp_obj,flow_arc_mgcp_imp,flow_comarc_mgcp_imp, mgcp_iter, mgcp_runtime) = mgcp_output
         return (flow_arc_mgcp_imp,flow_comarc_mgcp_imp,mgcp_iter,mgcp_runtime)
     elif (imp_proc == "ssp"):
@@ -446,7 +451,7 @@ def _demand_scaler(network, scaler):
     
 
 
-def fixInstanceExperiment(inst_list, constant_dict, initialization_list, imp_heuristics_list,
+def fixInstanceExperiment(inst_list, inst_id, constant_dict, initialization_list, imp_heuristics_list,
                           iter_log = None, 
                           time_limit = 120, 
                           demand_scaling_factor = 1): # seconds):
@@ -492,7 +497,7 @@ def fixInstanceExperiment(inst_list, constant_dict, initialization_list, imp_heu
             for imp_proc in imp_heuristics_list:
                 imp_ct+=1
                 print(f"==={itx_ct}: init-proc {init_proc}-{init_ct}, imp-proc {imp_proc}-{imp_ct} ===");print(" ")
-                (imp_fa, imp_fca, imp_iter, imp_rtime) = runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit, init_proc_text = f"{init_proc}-{init_ct}" )
+                (imp_fa, imp_fca, imp_iter, imp_rtime) = runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit, init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}" )
                 # imp_fc, imp_fca = ({},{})
                 _logger.log_improved_solution(network, imp_fa, imp_fca, imp_iter, imp_rtime, (it_cost, is_cost), f"init-{init_proc}-{init_ct}", f"imp-{imp_proc}-{imp_ct}")
         
