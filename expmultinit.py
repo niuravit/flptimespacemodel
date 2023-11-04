@@ -195,18 +195,18 @@ plot_folder = "plots/"
 create_folder_if_not_exist(result_folder)
 create_folder_if_not_exist(plot_folder)
 
-plt.figure(2)
 for i in instance_id_list:
     print(f'Staring fixInstanceExperiment... instance {inst_size}n id {i}')
     i_log = exp.fixInstanceExperiment(inst_list[i:i+1], i, constant_dict, initialization_list, imp_heuristics_list, 
-                                      time_limit=time_lim, demand_scaling_factor = demand_scaler)
+                                      time_limit=time_lim, demand_scaling_factor = demand_scaler,
+                                      plot_folder=plot_folder)
     
     log_collection[i+1] = i_log[1]
     result_tab = pd.DataFrame(log_collection).T
     # arrange col before save as .csv
     rearrange_col = exp_config.get_rearrange_col_log()
     result_tab[rearrange_col].to_csv(result_folder+result_file_name+".csv")
-    plt.savefig(f'{plot_folder}scobjplots_inst{i}-{inst_size}n-{time_lim}tl-{time_stamp}{name_suff}.png',bbox_inches='tight')
-plt.close()
+    # plt.savefig(f'{plot_folder}scobjplots_inst{i}-{inst_size}n-{time_lim}tl-{time_stamp}{name_suff}.png', bbox_inches='tight')
+# plt.clf()
 # recording the json-config 
 exp_config.export_json_configs(result_folder+json_output_name)

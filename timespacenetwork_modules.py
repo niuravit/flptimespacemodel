@@ -246,6 +246,9 @@ class MarginalCostPathSolver:
 
         # some text for labeling the graph
         self.init_proc_text = ""
+
+        # plot objs
+        self.plot_objs = {}
     
     def add_flow_to_path(self, f, dc, path, flow_arc, flowcom_arc):
         for i in range(len(path)-1):
@@ -536,13 +539,10 @@ class MarginalCostPathSolver:
     
     
     def plot_stat(self, ):
-        plt.figure(3)
         iter_log = self.logobjval
-        plt.figure(3,bbox_inches='tight')
-
+        fig, ax = plt.subplots()
         random.seed(len(iter_log))
         line_color = random.choice(COLOR_PALETTE)  # Random hexadecimal color
-
         if "grasp" in self.init_proc_text:
             line_stl = "-"
             # m = 'x'
@@ -551,11 +551,13 @@ class MarginalCostPathSolver:
             # m = 'o'
 
         se_afmgcp_cost = pd.Series(iter_log.values())
-        plt.plot(se_afmgcp_cost, color=line_color, linestyle = line_stl,label=f"{self.init_proc_text}-obj")
-        plt.legend(loc="upper left", bbox_to_anchor=(1,1))
-        plt.xlabel("iterations",  size = 20)
-        plt.ylabel("obj", size = 20)     
-        # plt.show()
+        ax.plot(se_afmgcp_cost, color=line_color, linestyle = line_stl,label=f"{self.init_proc_text}-obj")
+        ax.legend(loc="upper left", bbox_to_anchor=(1,1))
+        ax.set_xlabel("iterations",  size = 20)
+        ax.set_ylabel("obj", size = 20)     
+
+        self.plot_objs[self.init_proc_text] = (fig, ax)
+
     
     def _arrange_dc_for_reflow(self, dc_flow_removed, mode="volume_based", num_replication = 4, shuffling_ele = 3):
         if (mode=="volume_based"):
@@ -949,6 +951,9 @@ class SlopeScalingSolver:
         # some text for labeling the graph
         self.init_proc_text = ""
 
+        # dict for plot object
+        self.plot_objs = {}
+
         
     def initialize_rho(self, init_rho = None):
         print('Initialize rho...')
@@ -1154,7 +1159,6 @@ class SlopeScalingSolver:
             cost_old = iteration_log[iter_ct-1]['obj']
             approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
             
-            
             iteration_log[iter_ct] = dict()
             iteration_log[iter_ct]['flow_arc'] = flow_arc_new.copy()
             iteration_log[iter_ct]['flowcom_arc'] = flowcom_arc_new.copy()
@@ -1192,25 +1196,27 @@ class SlopeScalingSolver:
         return min_sol_dict, iteration_log
     
     def plot_stat(self, iter_log):
-        plt.figure(1)
-        for i in range(0,len(iter_log)-1):
-            ser1 = pd.Series(iter_log[i]['rho_arc'])
-            ser1.plot(x="arcs", y="rho")
-            plt.xlabel("arcs",  size = 20)
-            plt.ylabel("rho", size = 20)
-        plt.legend(['Iter{}'.format(i) for i in range(0,len(iter_log)-1)])
+        # for bigger size problem, rho plot doesn't tell anything....
+        # plt.figure(1)
+        # for i in range(0,len(iter_log)-1):
+        #     ser1 = pd.Series(iter_log[i]['rho_arc'])
+        #     ser1.plot(x="arcs", y="rho")
+        #     plt.xlabel("arcs",  size = 20)
+        #     plt.ylabel("rho", size = 20)
+        # plt.legend(['Iter{}'.format(i) for i in range(0,len(iter_log)-1)])
 
-        plt.figure(2)
-        plt.figure(2,bbox_inches='tight')
+        fig, ax = plt.subplots()
         line_color = random.choice(COLOR_PALETTE)  # Random hexadecimal color
 
         se_roundup_cost = pd.Series([iter_log[i]['obj'] for i in range(0,len(iter_log)-1)])
         se_approx_cost = pd.Series([iter_log[i]['appcost'] for i in range(0,len(iter_log)-1)])
-        plt.plot(se_roundup_cost, color=line_color,label=f"{self.init_proc_text}-roundup-obj")
-        plt.plot(se_approx_cost, color=line_color,linestyle='--', label=f"{self.init_proc_text}-approx-obj")
-        plt.legend(loc="upper left", bbox_to_anchor=(1,1))
-        plt.xlabel("iterations",  size = 20)
-        plt.ylabel("obj", size = 20)
+        ax.plot(se_roundup_cost, color=line_color,label=f"{self.init_proc_text}-roundup-obj")
+        ax.plot(se_approx_cost, color=line_color,linestyle='--', label=f"{self.init_proc_text}-approx-obj")
+        ax.legend(loc="upper left", bbox_to_anchor=(1,1))
+        ax.set_xlabel("iterations",  size = 20)
+        ax.set_ylabel("obj", size = 20)
+
+        self.plot_objs[self.init_proc_text] = (fig, ax)
 
     def concurrent_slope_scalling_with_time_limit(self, time_limit = 120, iteration_limit = np.inf, plot_slope = False):
         ''' run concurrent slope scaling with time limit (one dc at a time)'''
