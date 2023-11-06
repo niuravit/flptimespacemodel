@@ -1442,41 +1442,16 @@ class SlopeScalingSolver:
                     path,l = sorted_list[0]
                     self.add_flow_to_path(dcof[2], dcof[0], path, flow_arc_new, flowcom_arc_new)
                     path_solution[(dcof[0],dcof[1])] = (dcof[2],path)
-                
+
+                # est approx_cost, if after update rho, we will have the same cost
+                approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
                 # update the slope for the next des-agg input list
                 self.update_rho(flow_arc_new, flowcom_arc_new)
-
-            '''flow_arc_new = dict()
-            flowcom_arc_new = dict()
-            path_solution = dict()
-            # solving sc concurrently
-            shortest_path_trees = self.concurrent_shortest_path_submission(spp_input_list)
-            # print(f'solving shortest paths concurrently:{time.time()-t_s}')
-            t_s = time.time()
-            # Sequentially update the network instance based on the computed shortest paths.
-            # construct the dict that store only the best path 
-            feasible_path = dict()
-            for result_item in shortest_path_trees:
-                (paths,label) = result_item
-                for (dcof,path) in paths:
-                    if path is not None:
-                        if dcof in feasible_path.keys():
-                            feasible_path[dcof].append((path,label[dcof[1]]))
-                        else:
-                            feasible_path[dcof] = [(path,label[dcof[1]])]
-
-            # update the flow
-            for dcof in feasible_path:
-                sorted_list = sorted(feasible_path[dcof], key=lambda x:(x[1],x[0][-1][1]))
-                # print(sorted_list)
-                path,l = sorted_list[0]
-                self.add_flow_to_path(dcof[2], dcof[0], path, flow_arc_new, flowcom_arc_new)
-                path_solution[(dcof[0],dcof[1])] = (dcof[2],path)'''
-
+                
             tcost,scost = self.get_obj(flow_arc_new); 
             cost_new = tcost+scost 
             cost_old = iteration_log[iter_ct-1]['obj']
-            approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
+            # approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
 
             iteration_log[iter_ct] = dict()
             iteration_log[iter_ct]['flow_arc'] = flow_arc_new.copy()
