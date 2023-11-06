@@ -304,7 +304,7 @@ def solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, in
     mgcp_output = (mgcp_obj, mgcpsolver.flow_arc, mgcpsolver.flowcom_arc, mgcp_iter, mgcp_runtime, mgcpsolver.plot_objs) 
     return mgcp_output
 
-def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, init_proc_text=""):
+def solve_adaptive_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, init_proc_text=""):
     # slope scaling improving heuristics
     flow_arc_ass_imp = deepcopy(init_flow_arc)
     flow_comarc_ass_imp = deepcopy(init_flowcom_arc)
@@ -323,7 +323,7 @@ def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowco
     ss_output = (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp, len(iter_log), iter_log[len(iter_log)-2]['timestamp'], sssolver.plot_objs)             
     return ss_output
 
-def solve_adaptive_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, init_proc_text=""):
+def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, init_proc_text=""):
     # slope scaling improving heuristics
     flow_arc_ss_imp = deepcopy(init_flow_arc)
     flow_comarc_ss_imp = deepcopy(init_flowcom_arc)
