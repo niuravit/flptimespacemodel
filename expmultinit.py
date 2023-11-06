@@ -190,16 +190,18 @@ print(result_file_name)
 log_collection = dict()
 result_folder = "playgrounddump/"
 plot_folder = "plots/"
+plot_subfolder = f"{plot_folder}/{result_file_name}/"
 
 # create result and plot folders
 create_folder_if_not_exist(result_folder)
 create_folder_if_not_exist(plot_folder)
+create_folder_if_not_exist(plot_subfolder)
 
 for i in instance_id_list:
     print(f'Staring fixInstanceExperiment... instance {inst_size}n id {i}')
     i_log = exp.fixInstanceExperiment(inst_list[i:i+1], i, constant_dict, initialization_list, imp_heuristics_list, 
                                       time_limit=time_lim, demand_scaling_factor = demand_scaler,
-                                      plot_folder=plot_folder)
+                                      plot_folder=plot_subfolder)
     
     log_collection[i+1] = i_log[1]
     result_tab = pd.DataFrame(log_collection).T
