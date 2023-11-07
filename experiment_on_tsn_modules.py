@@ -320,7 +320,7 @@ def solve_adaptive_slope_scaling_improvement_from_sol(network, init_flow_arc, in
     print('adaptive (a)ss improving heuristic:{}, imp\%:{}'.format(ss_obj, round(100*(ss_obj-init_obj)/(init_obj),2)) +
           f' (t{round((ss_tcost-it_cost)*100/it_cost,2)}% , s{round((ss_scost-is_cost)*100/is_cost,2)}%)')
     sssolver.validate_demand_duedate_satisfaction(min_sol['path_sol'])
-    ss_output = (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp, len(iter_log), iter_log[len(iter_log)-2]['timestamp'], sssolver.plot_objs)             
+    ss_output = (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp, len(iter_log), iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs)             
     return ss_output
 
 def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, init_proc_text=""):
@@ -339,7 +339,7 @@ def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowco
     print('ss improving heuristic:{}, imp\%:{}'.format(ss_obj, round(100*(ss_obj-init_obj)/(init_obj),2)) +
           f' (t{round((ss_tcost-it_cost)*100/it_cost,2)}% , s{round((ss_scost-is_cost)*100/is_cost,2)}%)')
     sssolver.validate_demand_duedate_satisfaction(min_sol['path_sol'])
-    ss_output = (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp, len(iter_log), iter_log[len(iter_log)-2]['timestamp'], sssolver.plot_objs)             
+    ss_output = (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp, len(iter_log), iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs)             
     return ss_output
 
 
