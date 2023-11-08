@@ -195,8 +195,6 @@ def fixInstanceSCImprovingMGCPInitExperiment(inst_list, constant_dict,
         iter_log[itx_ct] = log
     return iter_log
 
-
-
 def fixInstanceImprovingOnMultiInitializationExperiment(inst_list, constant_dict,
                                                         iter_log = None, time_limit = 120): # seconds):
     HANDLING_COST = constant_dict["HANDLING_COST"]
@@ -341,7 +339,6 @@ def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowco
     sssolver.validate_demand_duedate_satisfaction(min_sol['path_sol'])
     ss_output = (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp, len(iter_log), iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs)             
     return ss_output
-
 
 def add_solution_stats_for_output(output,abm_obj,init_sol,mgcp_sol,ss_sol,network,name_id=""):
     (init_fa,init_fca) = init_sol; 

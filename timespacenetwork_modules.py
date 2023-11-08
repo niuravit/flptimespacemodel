@@ -284,8 +284,11 @@ class MarginalCostPathSolver:
         s_time = time.time()
         cost = 0
         demand_by_fc = self.network.demand_by_fc
-        dc_list = list(demand_by_fc.keys())
-        random.shuffle(dc_list)
+        # sorted by ascending order of total volume from all orgs
+        sorted_dict = dict(sorted(demand_by_fc.items(), key=lambda item: sum(item[1].values())))
+        dc_list = list(sorted_dict.keys())
+        # random.shuffle(dc_list)
+        
         i = 0 
         if save_to_img: 
             time_stp = datetime.now().strftime("%H%M-%b%d%y")
@@ -294,9 +297,10 @@ class MarginalCostPathSolver:
                 os.mkdir(f"plots/{folder_name}")
         for fc in dc_list:
             d = fc[0]
-            org_dict = demand_by_fc[fc]
+            # sorted by ascending order of volume by org
+            org_dict = dict(sorted(demand_by_fc[fc].items(), key=lambda item: item[1]))
             os_list = list(org_dict.keys())
-            random.shuffle(os_list)
+            # random.shuffle(os_list)
             for o in os_list:
                 i+=1
                 f = org_dict[o]
@@ -1447,7 +1451,7 @@ class SlopeScalingSolver:
                 approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
                 # update the slope for the next des-agg input list
                 self.update_rho(flow_arc_new, flowcom_arc_new)
-                
+
             tcost,scost = self.get_obj(flow_arc_new); 
             cost_new = tcost+scost 
             cost_old = iteration_log[iter_ct-1]['obj']
