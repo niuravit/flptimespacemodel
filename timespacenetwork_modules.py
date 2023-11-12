@@ -144,6 +144,35 @@ class TimeExpandedNetwork:
     def get_edges(self):
         return self.edges
 
+
+def get_obj(flow_arc, distance_matrix, trailer_cap, handling_cost, obj_mode, trailer_coeff = 1):
+    ''' Global function for calculate the objective cost
+    accept two modes: step or fix
+    '''
+    if (obj_mode == "step"):
+        t_cost = 0
+        s_cost = 0
+        for a in flow_arc:
+            if (flow_arc[a] > 1e-5):
+                # positive flow, charges stepping cost by number of trailers
+                t_cost += distance_matrix[_to_physical_arc(a)]*np.ceil(flow_arc[a]/trailer_cap)*trailer_coeff
+                s_cost += handling_cost*flow_arc[a]
+        return t_cost,s_cost
+    elif (obj_mode == "fix"):
+        t_cost = 0
+        s_cost = 0
+        for a in flow_arc:
+            if (flow_arc[a] > 1e-5):
+                # positive flow, charges single fix charge
+                t_cost += distance_matrix[_to_physical_arc(a)]*trailer_coeff
+                s_cost += handling_cost*flow_arc[a]
+        return t_cost,s_cost
+    else:
+        raise Exception(f"Invalid obj mode {obj_mode}");
+    
+def _to_physical_arc(tsarc):
+        return (tsarc[0][0],tsarc[1][0])
+
 def get_day_from_dc(dc):
     dstr = dc[1]
     if (dstr == '1D'): return 1
@@ -233,7 +262,7 @@ def convert_node_path_to_arc_path(npath):
     return [(npath[i],npath[i+1]) for i in range(len(npath)-1)]
 
 class MarginalCostPathSolver:
-    def __init__(self, network,flow_arc,flowcom_arc, alpha):
+    def __init__(self, network,flow_arc,flowcom_arc, alpha, obj_mode):
         self.network = network
         self.flow_arc = flow_arc
         self.flowcom_arc = flowcom_arc
@@ -242,6 +271,7 @@ class MarginalCostPathSolver:
         self.handling_cost = network.handling_cost
         self.deleted_demand = []
         self.alpha = alpha
+        self.obj_mode = obj_mode
         self.logobjval = {}
 
         # some text for labeling the graph
@@ -324,7 +354,7 @@ class MarginalCostPathSolver:
                     plot_base_network_with_paths(self.network,flow_arc,[(fc,tuple(path))], save_name = fname)
             
         print(f"Total acc cost label: {cost}")
-        print(f"Obj t_cost, s_cost: {self.get_obj(flow_arc)}")
+        print(f"Obj-mode-{self.obj_mode} t_cost, s_cost: {get_obj(flow_arc, self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)}")
         print(f"Construction time: {time.time() - s_time}")
         return flow_arc,flowcom_arc
     
@@ -391,17 +421,19 @@ class MarginalCostPathSolver:
                             ocost = 0
                         else:
                             oflow = flow_arc[ub_edge]
-                            ocost = np.ceil(oflow/self.trailer_cap)*self.distance_matrix[(u[0],v[0])]+(self.handling_cost*oflow)
+                            ocost = self.__get_marginal_cost_on_edge(ub_edge, oflow)
+                            # ocost = np.ceil(oflow/self.trailer_cap)*self.distance_matrix[(u[0],v[0])]+(self.handling_cost*oflow)
                     else:
                         oflow = 0
                         ocost = 0
                     new_flow = oflow + flow_vol
-                    cost_af = (np.ceil((new_flow)/self.trailer_cap)*self.distance_matrix[(u[0],v[0])])+(self.handling_cost*new_flow)
+                    cost_af = self.__get_marginal_cost_on_edge(ub_edge, new_flow)
+                    # cost_af = (np.ceil((new_flow)/self.trailer_cap)*self.distance_matrix[(u[0],v[0])])+(self.handling_cost*new_flow)
                     marginal_cost = cost_af - ocost
-                    if (marginal_cost<0):
-                        print(f'edge {ub_edge}, oflow {oflow}, ocost {ocost} ')
-                        print(f' flow added {flow_vol}, new_flow {new_flow}, new cost {cost_af}')
-                        print(f'ocost: {ocost}, newcost {cost_af}, mgncost {marginal_cost}') 
+                    # if (marginal_cost<0):
+                    #     print(f'edge {ub_edge}, oflow {oflow}, ocost {ocost} ')
+                    #     print(f' flow added {flow_vol}, new_flow {new_flow}, new cost {cost_af}')
+                    #     print(f'ocost: {ocost}, newcost {cost_af}, mgncost {marginal_cost}') 
                     
                     if (v in labels.keys()):
                         if (current_distance + marginal_cost < labels[v]): 
@@ -418,6 +450,16 @@ class MarginalCostPathSolver:
 
         return feasible_choices
     
+    def __get_marginal_cost_on_edge(self, ts_edge, flow, trailer_coeff = 1 ):
+        (u,v) = ts_edge
+        flow = round(flow, 6)
+        if (self.obj_mode == 'step'):
+            return ((np.ceil((flow)/self.trailer_cap)*self.distance_matrix[(u[0],v[0])])*trailer_coeff) + (self.handling_cost*flow)
+        elif (self.obj_mode == 'fix'):
+            if (flow > 1e-6): return (self.distance_matrix[(u[0],v[0])]*trailer_coeff) + (self.handling_cost*flow)
+            else: return 0
+        else:
+            raise Exception(f"Invalid obj mode {self.obj_mode}")
     
     def _check_arrival_time(self,next_node, destination_node):
         '''given next time space node and final time space destination node'''
@@ -482,20 +524,9 @@ class MarginalCostPathSolver:
             # dc appears this _narc -> true
             arc_obey_intree = (dc in dcs_in_narc)
         return arc_obey_intree
-            
-    def _to_physical_arc(self, tsarc):
-        return (tsarc[0][0],tsarc[1][0])
     
-    def get_obj(self, flow_arc):
-        t_cost = 0
-        s_cost = 0
-        for a in flow_arc:
-            if (flow_arc[a] > 1e-5):
-                t_cost += self.distance_matrix[self._to_physical_arc(a)]*np.ceil(flow_arc[a]/self.trailer_cap)
-                s_cost += self.handling_cost*flow_arc[a]
-        return t_cost,s_cost
     
-    def mgcp_single_lane_improvement_with_time_limit(self, time_limit = 120, lane_selection_mode = 'vol', reflow_mode = "default",
+    def mgcp_single_lane_improvement_with_time_limit(self, time_limit = 120, lane_selection_mode = 'vol', reflow_mode = "volume_based",
                                                      plot_obj = True):
         if lane_selection_mode == 'vol':
             sorted_target_arcs = sorted(self.flow_arc.items(),  key=lambda x:x[1], reverse=True)
@@ -524,12 +555,13 @@ class MarginalCostPathSolver:
                     print("Zero flow, skip!!")
                     continue
                 # different modes  
-                if (reflow_mode == "default"):
-                    cost = self.mgcp_single_lane_improvement(a,)
-                elif (reflow_mode == "grasp"):
-                    cost = self.mgcp_single_lane_improvement_with_grasp(a,)
-                else:
-                    raise Exception(f"{reflow_mode} is invalid mode for mgcp single lane improvement")
+                cost = self.mgcp_single_lane_improvement(a, reflow_mode)
+                # if (reflow_mode == "default"):
+                #     cost = self.mgcp_single_lane_improvement(a,)
+                # elif (reflow_mode == "grasp"):
+                #     cost = self.mgcp_single_lane_improvement_with_grasp(a,)
+                # else:
+                #     raise Exception(f"{reflow_mode} is invalid mode for mgcp single lane improvement")
                 self.logobjval[iteration] = cost
 
             if (hit_limit_in_for): break;
@@ -566,28 +598,54 @@ class MarginalCostPathSolver:
     def _arrange_dc_for_reflow(self, dc_flow_removed, mode="volume_based", num_replication = 4, shuffling_ele = 3):
         if (mode=="volume_based"):
             sorted_volume_based_dc = sorted(dc_flow_removed.items(), key=lambda x:x[1], reverse=True)
+            return sorted_volume_based_dc
         elif (mode=="grasp"):
             # greedy randomized adaptive search procedure
             sorted_volume_based_dc = sorted(dc_flow_removed.items(), key=lambda x:x[1], reverse=True)
+            if len(sorted_volume_based_dc)==1:
+                return sorted_volume_based_dc
+            else:
+                grasp_volume_based_dc = []
+                if (len(sorted_volume_based_dc) < 10):
+                    basket_size = min(3,len(sorted_volume_based_dc))
+                else:
+                    basket_size = int(0.3*len(sorted_volume_based_dc))
+                basket = sorted_volume_based_dc[:basket_size]
+
+                for i in range(len(sorted_volume_based_dc)):
+                    sel_item_i = random.randint(0,len(basket)-1)
+                    sel_item = basket.pop(sel_item_i)
+                    grasp_volume_based_dc.append(sel_item)
+
+                    if (i+basket_size < len(sorted_volume_based_dc)):
+                        basket.append(sorted_volume_based_dc[i+basket_size]);
+                # print(f'sorted_vol_dc: {sorted_volume_based_dc}')
+                # print(f'grasp_vol_dc: {grasp_volume_based_dc}')
+                return grasp_volume_based_dc
+
+            '''
+            old replication implementation
             # prevent exception when size of dc is small
-            t = min(shuffling_ele, len(sorted_volume_based_dc))
-            replications = []
-            for i in range(num_replication):
-                replication = sorted_volume_based_dc.copy()
-                # set different seed to get different result
-                random.seed(i)
-                # retrive and suffle the first t elements
-                shuffled_part = replication[:t]
-                random.shuffle(shuffled_part)
-                # replace the first t elements with shuffled one
-                replication[:t] = shuffled_part
-                # append to the storage
-                replications.append(replication)
-            return replications
+            # t = min(shuffling_ele, len(sorted_volume_based_dc))
+            # replications = []
+            # for i in range(num_replication):
+            #     replication = sorted_volume_based_dc.copy()
+            #     # set different seed to get different result
+            #     random.seed(i)
+            #     # retrive and suffle the first t elements
+            #     shuffled_part = replication[:t]
+            #     random.shuffle(shuffled_part)
+            #     # replace the first t elements with shuffled one
+            #     replication[:t] = shuffled_part
+            #     # append to the storage
+            #     replications.append(replication)
+            # return replications
+            '''
         else:
             raise Exception("Invalid mode")
-        return sorted_volume_based_dc
-    
+        
+    '''
+    old version
     def mgcp_single_lane_improvement_with_grasp(self, lane_arc,):
         (ots_node, dts_node) = lane_arc
         (ot_cost,os_cost) = self.get_obj(self.flow_arc)
@@ -638,7 +696,8 @@ class MarginalCostPathSolver:
 
         # self.validate_demand_delivered(self.flow_arc,self.flowcom_arc)
         return cost_af_repath
-        
+    '''
+
     def sequencial_dc_sequence_mgcp_submission(self, dc_sequence_collections, ots_node):
         repath_results = []
         for dc_seq in dc_sequence_collections:
@@ -682,19 +741,19 @@ class MarginalCostPathSolver:
         # print(f'repath dc seq: {[k[0] for k in dc_sequence]}, cost added: {cost_added} ')
         return (cost_added, dc_mgcp_repath, flow_arc, flowcom_arc, dc_sequence)
 
-    def mgcp_single_lane_improvement(self, lane_arc,):
+    def mgcp_single_lane_improvement(self, lane_arc, reflow_mode):
         (ots_node, dts_node) = lane_arc
-        (ot_cost,os_cost) = self.get_obj(self.flow_arc)
+        (ot_cost,os_cost) = get_obj(self.flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         o_cost = ot_cost + os_cost
         # return dict each dc and volume that needs to be reflowed
         dc_flow_removed, cost_removed, dc_removed_path = self.remove_flowlane_from_downstream(lane_arc)
-        dc_sequence = self._arrange_dc_for_reflow(dc_flow_removed,mode="volume_based")
+        dc_sequence = self._arrange_dc_for_reflow(dc_flow_removed,mode=reflow_mode)
         # repath dc sequence with mgcp: we can use self.flow_arc and self.flowcom_arc directly
         (cost_added, dc_mgcp_repath, _t1, _t2, _t3) = self.repath_dc_sequence_with_mgcp(dc_sequence, ots_node, self.flow_arc, self.flowcom_arc)
 
-        aft_cost,afs_cost = self.get_obj(self.flow_arc)
+        aft_cost,afs_cost = get_obj(self.flow_arc, self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         cost_af_repath = aft_cost + afs_cost
-        print(f'Lane {lane_arc}, cost-change: {round(cost_added+cost_removed,3)} (recheck cost-change: {round(cost_af_repath-o_cost,3)}) ({round((cost_added+cost_removed)*100/(o_cost),2)} %)')
+        print(f'Lane {lane_arc}, objmode {self.obj_mode}, cost-change: {round(cost_added+cost_removed,3)} (recheck cost-change: {round(cost_af_repath-o_cost,3)}) ({round((cost_added+cost_removed)*100/(o_cost),2)} %)')
 
         if (cost_added+cost_removed<=-1e-5):
             # update alpha
@@ -714,7 +773,7 @@ class MarginalCostPathSolver:
                 self.add_flow_to_path(-f,dc,remove_path,self.flow_arc,self.flowcom_arc)
                 readd_path = dc_removed_path[dc]
                 self.add_flow_to_path(f,dc,readd_path,self.flow_arc,self.flowcom_arc)
-            aft_cost,afs_cost = self.get_obj(self.flow_arc)
+            aft_cost,afs_cost = get_obj(self.flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
             cost_af_repath = aft_cost + afs_cost
 
         return cost_af_repath
@@ -746,7 +805,7 @@ class MarginalCostPathSolver:
                     dcs_on_lane[dc] =  self.flowcom_arc[dc][lane_arc]
 
         # trace path first and remove later
-        bft_cost, bfs_cost = self.get_obj(self.flow_arc)
+        bft_cost, bfs_cost = get_obj(self.flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         cost_before_removed = bft_cost + bfs_cost
         dcs = list(dcs_on_lane.keys())
         for dc in dcs:
@@ -762,7 +821,7 @@ class MarginalCostPathSolver:
                 self.add_flow_to_path(-remove_f,dc,path,self.flow_arc,self.flowcom_arc)
                 dcs_removed_path[dc] = path
         # calculate cost after removing flow
-        aft_cost, afs_cost = self.get_obj(self.flow_arc)
+        aft_cost, afs_cost = get_obj(self.flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         cost_af_removed = aft_cost+afs_cost
         cost_removed = cost_af_removed - cost_before_removed
         dc_flow_removed = dcs_on_lane
@@ -807,7 +866,7 @@ class MarginalCostPathSolver:
         # calculate cost before making change
         trailer_bf = np.ceil(flow_arc[arc]/self.trailer_cap)
         volume_bf = flow_arc[arc]
-        phys_arc = self._to_physical_arc(arc)
+        phys_arc = _to_physical_arc(arc)
         cost_bf = self.distance_matrix[phys_arc]*trailer_bf +  self.handling_cost*volume_bf
         
         # add/remove flow: recommended to use for deleting only, adding behavior is not guarantee
@@ -936,7 +995,7 @@ class MarginalCostPathSolver:
 
 # Slope Scaling for time-expanded network
 class SlopeScalingSolver:
-    def __init__(self, network, flow_arc, flowcom_arc):
+    def __init__(self, network, flow_arc, flowcom_arc, obj_mode):
         self.network = network
         self.flow_arc = flow_arc
         self.flowcom_arc = flowcom_arc
@@ -946,10 +1005,11 @@ class SlopeScalingSolver:
         self.deleted_demand = []
         self.rho = dict()
         self.timespacearcs = network.get_edges().keys()
+        self.obj_mode = obj_mode
         
         # initialize rho with the base slope
         self.initialize_rho()
-        self.init_obj = sum(list(self.get_obj(flow_arc)))
+        self.init_obj = sum(list(get_obj(flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)))
         self.alpha = dict()
 
         # some text for labeling the graph
@@ -962,7 +1022,10 @@ class SlopeScalingSolver:
     def initialize_rho(self, init_rho = None):
         print('Initialize rho...')
         if (init_rho is None):
-            self.rho = dict([(a, (self.distance_matrix[self._to_physical_arc(a)]/self.trailer_cap) + self.handling_cost) for a in self.network.get_edges().keys()])
+            if (self.obj_mode == 'step'):
+                self.rho = dict([(a, (self.distance_matrix[_to_physical_arc(a)]/self.trailer_cap) + self.handling_cost) for a in self.network.get_edges().keys()])
+            elif (self.obj_mode == 'fix'):
+                self.rho = dict([(a, (self.distance_matrix[_to_physical_arc(a)]) + self.handling_cost) for a in self.network.get_edges().keys()])
             # self.rho = dict([(a, (self.distance_matrix[self._to_physical_arc(a)]/self.trailer_cap)) for a in self.network.get_edges().keys()])
         else:
             self.rho = deepcopy(init_rho)
@@ -978,9 +1041,14 @@ class SlopeScalingSolver:
         
         for a in self.timespacearcs:
             if (a in flow_arc.keys() and flow_arc[a]>1e-5):
-                phys_a = self._to_physical_arc(a)
-                # linearized fix charge rounding with constant handling cost
-                rho[a] = ((self.distance_matrix[phys_a]*np.ceil(flow_arc[a]/self.trailer_cap))/flow_arc[a]) + self.handling_cost
+                phys_a = _to_physical_arc(a)
+                if (self.obj_mode == 'step'):
+                    # linearized step charge 
+                    rho[a] = ((self.distance_matrix[phys_a]*np.ceil(flow_arc[a]/self.trailer_cap))/flow_arc[a]) + self.handling_cost
+                elif (self.obj_mode == 'fix'):
+                    # linearized fix charge
+                    rho[a] = (self.distance_matrix[phys_a]/flow_arc[a]) + self.handling_cost
+
             else:
                 rho[a] = prev_rho[a]
             # if (abs(rho[a] - prev_rho[a]) > 1e-5):
@@ -1158,7 +1226,7 @@ class SlopeScalingSolver:
                 path_solution[(dcof[0],dcof[1])] = (dcof[2],path)
             # print(f'add results to paths:{time.time()-t_s}')
 
-            tcost,scost = self.get_obj(flow_arc_new); 
+            tcost,scost = get_obj(flow_arc_new,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode); 
             cost_new = tcost+scost
             cost_old = iteration_log[iter_ct-1]['obj']
             approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
@@ -1212,8 +1280,8 @@ class SlopeScalingSolver:
         fig, ax = plt.subplots()
         line_color = random.choice(COLOR_PALETTE)  # Random hexadecimal color
 
-        se_roundup_cost = pd.Series([iter_log[i]['obj'] for i in range(0,len(iter_log)-1)])
-        se_approx_cost = pd.Series([iter_log[i]['appcost'] for i in range(0,len(iter_log)-1)])
+        se_roundup_cost = pd.Series([iter_log[i]['obj'] for i in range(0,len(iter_log))])
+        se_approx_cost = pd.Series([iter_log[i]['appcost'] for i in range(0,len(iter_log))])
         ax.plot(se_roundup_cost, color=line_color,label=f"{self.init_proc_text}-roundup-obj")
         ax.plot(se_approx_cost, color=line_color,linestyle='--', label=f"{self.init_proc_text}-approx-obj")
         ax.legend(loc="upper left", bbox_to_anchor=(1,1))
@@ -1285,7 +1353,7 @@ class SlopeScalingSolver:
                 self.add_flow_to_path(dcof[2], dcof[0], path, flow_arc_new, flowcom_arc_new)
                 path_solution[(dcof[0],dcof[1])] = (dcof[2],path)
 
-            tcost,scost = self.get_obj(flow_arc_new); 
+            tcost,scost = get_obj(flow_arc_new,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode); 
             cost_new = tcost+scost 
             cost_old = iteration_log[iter_ct-1]['obj']
             approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
@@ -1307,11 +1375,20 @@ class SlopeScalingSolver:
             if (min_sol_dict['obj']>cost_new):
                 print('Improved solution found, saving...')
                 min_sol_dict = iteration_log[iter_ct].copy()
+                       
                 
             # update terminating condition
             sol_diff = np.inf
             if (iter_ct-1>0):
                 sol_diff = self.get_sol_diff(flowcom_arc_new,iteration_log[iter_ct-1]['flowcom_arc'])
+
+            # after saving, clear large variable to save memory: flow_arc, flowcom_arc, path_sol of previous iteration
+            if (iter_ct > 2): 
+                del iteration_log[iter_ct-2]['flow_arc']
+                del iteration_log[iter_ct-2]['flowcom_arc']
+                del iteration_log[iter_ct-2]['rho_arc']
+                del iteration_log[iter_ct-2]['path_sol']
+
             
             iter_ct+=1
 
@@ -1452,7 +1529,7 @@ class SlopeScalingSolver:
                 # update the slope for the next des-agg input list
                 self.update_rho(flow_arc_new, flowcom_arc_new)
 
-            tcost,scost = self.get_obj(flow_arc_new); 
+            tcost,scost = get_obj(flow_arc_new,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode); 
             cost_new = tcost+scost 
             cost_old = iteration_log[iter_ct-1]['obj']
             # approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
@@ -1480,6 +1557,13 @@ class SlopeScalingSolver:
             if (iter_ct-1>0):
                 sol_diff = self.get_sol_diff(flowcom_arc_new,iteration_log[iter_ct-1]['flowcom_arc'])
             
+            # after saving, clear large variable to save memory: flow_arc, flowcom_arc, path_sol of previous iteration
+            if (iter_ct > 2):
+                del iteration_log[iter_ct-2]['flow_arc']
+                del iteration_log[iter_ct-2]['flowcom_arc']
+                del iteration_log[iter_ct-2]['rho_arc']
+                del iteration_log[iter_ct-2]['path_sol']
+
             iter_ct+=1
 
             if (sol_diff <= 1e-5): TOLERANCE_MET = True
@@ -1488,21 +1572,13 @@ class SlopeScalingSolver:
             
             print("SC-Iteration {}: {} {}, change {}".format(iter_ct,TOLERANCE_MET,TIMELIMIT_MET,cost_new-cost_old))
             print(f"Prev solution SPP cost: {approx_cost}")
-            print(f"New cost: {cost_new}, new approx cost: {self.get_approx_obj(flow_arc_new,self.rho)}")
+            print(f"New cost {self.obj_mode}-mode: {cost_new}, new approx cost: {self.get_approx_obj(flow_arc_new,self.rho)}")
             
         #### Plot stats
         if (plot_slope):
             self.plot_stat(iteration_log)
         return min_sol_dict, iteration_log
 
-    def get_obj(self, flow_arc):
-        t_cost = 0
-        s_cost = 0
-        for a in flow_arc:
-            if (flow_arc[a] > 1e-5):
-                t_cost += self.distance_matrix[self._to_physical_arc(a)]*np.ceil(flow_arc[a]/self.trailer_cap)
-                s_cost += self.handling_cost*flow_arc[a]
-        return t_cost,s_cost
     
     def get_approx_obj(self, flow_arc, rho):
         approx_cost = 0
@@ -1528,9 +1604,6 @@ class SlopeScalingSolver:
         elif (dstr == '2D'): return 2
         elif (dstr == '3D'): return 3
         elif (dstr == 'GND'): return 7
-        
-    def _to_physical_arc(self, tsarc):
-        return (tsarc[0][0],tsarc[1][0])
     
     def _check_arrive_ontime(self, ts_ord, des_b, dc, n_node):
         '''given next time space node, origin time space node, current destination and flow class'''
@@ -1599,7 +1672,7 @@ class SlopeScalingSolver:
     def intree_fixing_path_based_solution(self, path_sol, flow_arc, flowcom_arc):
         ''' given a path-solution, heuristically fixes all intree breaking by 
         merging them to one the single earliest-arrival path'''
-        ot_cost,os_cost = self.get_obj(flow_arc)
+        ot_cost,os_cost = get_obj(flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         old_obj = ot_cost+os_cost 
         for dc in flowcom_arc:
             itbn = self.get_intree_breaking_nodes(dc, path_sol, flowcom_arc[dc])
@@ -1610,7 +1683,7 @@ class SlopeScalingSolver:
         # update alpha of the new solution
         alpha = {}
         update_alpha_path_based_solution(path_sol,alpha)
-        nt_cost,ns_cost =  self.get_obj(flow_arc)
+        nt_cost,ns_cost =  get_obj(flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         new_obj = nt_cost+ns_cost
         # validating approve solution
         self.validate_demand_delivered(flow_arc,flowcom_arc)

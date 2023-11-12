@@ -27,8 +27,11 @@ class experiment_configuration:
             inst_size: <int> specifying the size(#node) of instance
             time_lim: <int> specifying time limit of each heuristic in seconds
             instance_list: list<int> specifying instance id
+            obj_func: <string> from step or fix or modified
             initialization_list: list<strings> from mgcp, sp specifying the initilization method
+                                * load from presave init: load_mgcp or load_sp
             imp_heuristics_list: list<strings> from vol-mgcp, org_vol-mgcp, ssp, vol-mgcp_w_grasp,org_vol-mgcp_w_grasp, adssp specifying the heuristics method ,
+                                * special mode: "save_init_sol" no imp heuristics is running, but save out init solution as pickle
             demand_scaler: <int> constant positive factor to scale demand
             name_suff: <string> any name tag for the experiment
             e.g., >>> python3 expmultinit.py 12 300 all mgcp,sp mgcp,ssp testrun
@@ -39,6 +42,7 @@ class experiment_configuration:
         self.inst_size = None
         self.time_lim = None
         self.instance_list = None
+        self.obj_func = None
         self.initialization_list = None
         self.imp_heuristics_list = None
         self.demand_scaler = None
@@ -51,27 +55,22 @@ class experiment_configuration:
         
     def read_command_line_config(self,l, argv):
         print("reading configuration from command line...")
-        if l == 7:
+        if l == 9:
             self.inst_size = int(argv[1])
             self.time_lim = int(argv[2])
             self.instance_list = self.__parse_instance_list(argv[3])
-            self.initialization_list = argv[4].split(',')
-            self.imp_heuristics_list = argv[5].split(',')
-            self.demand_scaler = float(argv[6])
-        elif l == 8:
-            self.inst_size = int(argv[1])
-            self.time_lim = int(argv[2])
-            self.instance_list = self.__parse_instance_list(argv[3])
-            self.initialization_list = argv[4].split(',')
-            self.imp_heuristics_list = argv[5].split(',')
-            self.demand_scaler = float(argv[6])
-            self.name_suff = argv[7]
+            self.obj_func = argv[4]
+            self.initialization_list = argv[5].split(',')
+            self.imp_heuristics_list = argv[6].split(',')
+            self.demand_scaler = float(argv[7])
+            self.name_suff = argv[8]
         else:
             raise Exception('invalid command, re-check the definition!')
             
         print(f"\t instance size:{self.inst_size}")
         print(f"\t time limit:{self.time_lim}")
         print(f"\t instance list:{self.instance_list}")
+        print(f"\t obj_func:{self.obj_func}")
         print(f"\t initialization procedures:{self.initialization_list}")
         print(f"\t improving heuristics:{self.imp_heuristics_list}")
         print(f"\t demand_scaler:{self.demand_scaler}")
@@ -97,6 +96,7 @@ class experiment_configuration:
             "inst_size":self.inst_size,
             "time_lim":self.time_lim,
             "instance_list":self.instance_list,
+            "obj_func":self.obj_func,
             "initialization_list":self.initialization_list,
             "imp_heuristics_list":self.imp_heuristics_list,
             "demand_scaler":self.demand_scaler,
@@ -112,7 +112,7 @@ class experiment_configuration:
         rearrange_col += instance_spec_col
 
         imp_obj_set = ['imp%','t_imp%','s_imp%','obj','tcost','scost']    
-        util_set = ['ud_avg']
+        util_set = ['ud_avg','path_len']
         time_set = ['iter','rtime']
 
         # obj set
@@ -130,7 +130,7 @@ class experiment_configuration:
         # utilization set
         for init_idx in range(1,len(self.initialization_list)+1):
             init_proc = self.initialization_list[init_idx-1]
-            init_re_col = [f'init-{init_proc}-{init_idx}_ud_avg']
+            init_re_col = [f'init-{init_proc}-{init_idx}_{val}' for val in ['ud_avg','path_len']]
             rearrange_col += init_re_col
             
             for imp_idx in range(1,len(self.imp_heuristics_list)+1):
@@ -161,6 +161,7 @@ exp_config = experiment_configuration(sys.argv)
 # configuration from json config
 constant_dict = exp_config.static_config['model']
 instance_path = exp_config.static_config['data']['instance_path']
+init_sol_path = exp_config.static_config['data']['init_sol_path']
 module_path = exp_config.static_config['data']['module_path']
 sys.path.insert(0, module_path)
 
@@ -171,12 +172,12 @@ inst_f_list = os.listdir(instance_path)
 inst_size = exp_config.inst_size
 time_lim = exp_config.time_lim
 instance_id_list = exp_config.instance_list
+obj_func = exp_config.obj_func
 initialization_list = exp_config.initialization_list
 imp_heuristics_list = exp_config.imp_heuristics_list
 demand_scaler = exp_config.demand_scaler
 name_suff = exp_config.name_suff
 
-# option = 1
 
 inst_names = [n for n in inst_f_list if f"inst_{inst_size}n" in n]
 inst_names = sorted(inst_names)
@@ -199,16 +200,17 @@ create_folder_if_not_exist(plot_subfolder)
 
 for i in instance_id_list:
     print(f'Staring fixInstanceExperiment... instance {inst_size}n id {i}')
-    i_log = exp.fixInstanceExperiment(inst_list[i:i+1], i, constant_dict, initialization_list, imp_heuristics_list, 
-                                      time_limit=time_lim, demand_scaling_factor = demand_scaler,
-                                      plot_folder=plot_subfolder)
-    
+    i_log = exp.fixInstanceExperiment(inst_list[i:i+1],inst_names[i:i+1], i, constant_dict, initialization_list, imp_heuristics_list, 
+                                      time_limit=time_lim, demand_scaling_factor = demand_scaler, obj_mode = obj_func,
+                                      plot_folder=plot_subfolder, save_instance_path = init_sol_path)
+    if (imp_heuristics_list[0]=="save_init_sol"):
+        # no improvement is running, just skip logging
+        continue
     log_collection[i+1] = i_log[1]
     result_tab = pd.DataFrame(log_collection).T
     # arrange col before save as .csv
     rearrange_col = exp_config.get_rearrange_col_log()
     result_tab[rearrange_col].to_csv(result_folder+result_file_name+".csv")
-    # plt.savefig(f'{plot_folder}scobjplots_inst{i}-{inst_size}n-{time_lim}tl-{time_stamp}{name_suff}.png', bbox_inches='tight')
-# plt.clf()
+    
 # recording the json-config 
 exp_config.export_json_configs(result_folder+json_output_name)

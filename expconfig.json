@@ -1,6 +1,7 @@
 {
     "data": {
         "instance_path": "instances/multicommodity-timespace-instances/",
+        "init_sol_path": "instances/multicommodity-timespace-instances/init_sol/",
         "module_path": "../"
     },
     "model": {
