@@ -208,10 +208,11 @@ def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, init
                           iter_log = None, 
                           time_limit = 120, 
                           demand_scaling_factor = 1,
+                          sortc_scaling_factor = 1,
                           obj_mode = "step",
                           plot_folder = "/plots",
                           save_instance_path = None): # seconds):
-    HANDLING_COST = constant_dict["handling_cost"]
+    HANDLING_COST = constant_dict["handling_cost"]*sortc_scaling_factor
     TRAILER_CAP = constant_dict["trailer_cap"]
     num_days = constant_dict['num_days']
     periods_per_day = constant_dict['periods_per_day']
@@ -249,6 +250,9 @@ def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, init
             init_ct+=1
             # get initial solution: either newly generated or presaved init solution
             (it_cost, is_cost), init_fa, init_fca, init_path_sol, alpha, network = get_initial_solution(init_proc, save_instance_path, demand_scaling_factor, inst_name_list[i], network, obj_mode)
+            # add-hoc sort-cost scaler adjustment
+            print(f"Adjusting sorting cost from {constant_dict['handling_cost']} to {HANDLING_COST}")
+            network.handling_cost = HANDLING_COST
             # (it_cost, is_cost), init_fa, init_fca, alpha = generate_initial_solution(network, init_proc, obj_mode)
             _logger.log_initial_solution(network, init_fa, init_fca, init_path_sol, init_proc, init_ct)
 
@@ -305,6 +309,9 @@ class logger:
         # solver for cal obj
         __solver = tsmd.MarginalCostPathSolver(network, init_fa, init_fca,{}, self.obj_mode)
         it_cost,is_cost = tsmd.get_obj(init_fa, __solver.distance_matrix, __solver.trailer_cap, __solver.handling_cost, __solver.obj_mode)
+         # we just load the initial solution. the objective cost calculation maybe differ from when it's generated, so recaluculate again.
+        print(f'init-sol recal cost: handling cost used: {network.handling_cost}, tcost{it_cost}, scost{is_cost}')
+
         init_obj = it_cost+is_cost
         # trailer util
         init_util_dist_avg = self.get_util_dist_average(init_fa, network.distance_matrix, network.trailer_cap)
@@ -321,6 +328,7 @@ class logger:
         # solver for cal obj
         __solver = tsmd.MarginalCostPathSolver(network, imp_fa, imp_fca,{}, self.obj_mode)
         imp_tcost,imp_scost = tsmd.get_obj(imp_fa, __solver.distance_matrix, __solver.trailer_cap, __solver.handling_cost, __solver.obj_mode)
+       
         imp_obj = imp_tcost+imp_scost
         # trailer util
         imp_util_dist_avg = self.get_util_dist_average(imp_fa, network.distance_matrix, network.trailer_cap)
@@ -370,286 +378,3 @@ def read_initial_sol(file_path):
     print(f"Loaded object from path {file_path}")
     return loaded_object
 
-'''
-# def fixInstanceSCImprovingSPPInitExperiment(inst_list, constant_dict,
-#                                                         iter_log = None, time_limit = 120): # seconds):
-#     HANDLING_COST = constant_dict["HANDLING_COST"]
-#     TRAILER_CAP = constant_dict["TRAILER_CAP"]
-#     SERVICE_TYPES = constant_dict["SERVICE_TYPES"]
-#     num_days = constant_dict['num_days']
-#     periods_per_day = constant_dict['periods_per_day']
-#     hub_capacity = constant_dict['hub_capacity']
-#     simplified_sort_label = constant_dict['simplified_sort_label']
-#     velocity = constant_dict['velocity']
-    
-#     if (iter_log is None):
-#         iter_log = dict(); itx_ct = 0;
-#     else:
-#         itx_ct = len(iter_log)
-        
-#     for inst in inst_list:
-#         itx_ct+=1 
-#         print(f'=== Iteration {itx_ct} ===')
-#         travel_hr_matrix = dict([(e,inst['distance_matrix'][e]/velocity) for e in inst['distance_matrix']])
-#         # generate time-expanded network from instance
-#         network = tsmd.TimeExpandedNetwork(inst, num_days, periods_per_day, hub_capacity, travel_hr_matrix, 
-#                                    simplified_sort_label,TRAILER_CAP, HANDLING_COST)
-#         network.remove_infeasible_demand()
-#         flatten_dem = [network.demand_by_fc[dc][a] for dc in network.demand_by_fc for a in network.demand_by_fc[dc]]
-#         # create log dict
-#         log = {lk:None for lk in constant_dict['log_keys']}
-        
-#         # log statistic of instance
-#         log['nodes_no'] = len(network.nodes); log['arcs_no'] = len(network.edges);
-#         log['total_dem'] = sum(flatten_dem); log['trail_cap'] = TRAILER_CAP
-#         log['min_dem'] = min(flatten_dem); log['max_dem'] = max(flatten_dem); 
-        
-#         # arc-based model...
-#         abm_obj = None    
-#         sample_no = 2
-#         for i in range(sample_no):
-#             # init: random sequence of MGCP 
-#             sppinit_id = i + 1
-#             print(f"\n === Instance {itx_ct}, SPP init-soln {sppinit_id} ===");print(" ")
-#             sssolver = tsmd.SlopeScalingSolver(network, {},{})
-#             flow_arc_sppinit, flowcom_arc_sppinit, spp_paths = sssolver.get_initial_shortest_path_sol()
-
-#             # slope scaling improving heuristics
-#             ss_output = solve_slope_scaling_improvement_from_sol(network, flow_arc_sppinit, flowcom_arc_sppinit, time_limit)
-
-#             # add to solution log
-#             name_id = sppinit_id
-#             (init_fa,init_fca) = (flow_arc_sppinit,flowcom_arc_sppinit); 
-#             (ss_obj,ss_fa,ss_fca,ss_iter,ss_rtime) = ss_output;
-            
-#             # calculating obj
-#             it_cost, is_cost = sssolver.get_obj(init_fa)
-#             init_obj = it_cost + is_cost
-#             sst_cost, sss_cost = sssolver.get_obj(ss_fa)
-#             ss_obj = sst_cost + sss_cost
-            
-#             # trailer util
-#             init_util_dist_avg = get_util_dist_average(init_fa,network.distance_matrix,network.trailer_cap)
-#             ss_util_dist_avg = get_util_dist_average(ss_fa,network.distance_matrix,network.trailer_cap)
-            
-#             log["Init{}_obj".format(name_id)] = init_obj
-#             log["Init{}_truck".format(name_id)] = it_cost
-#             log["Init{}_sort".format(name_id)] = is_cost
-#             log["ss{}_obj".format(name_id)] = ss_obj
-#             log["ss{}_truck".format(name_id)] = sst_cost
-#             log["ss{}_sort".format(name_id)] = sss_cost
-
-#             log["ss{}_iter".format(name_id)] = ss_iter
-#             log["ss{}_rtime".format(name_id)] = ss_rtime
-            
-#             log["Init{}_gap".format(name_id)] = None #round((init_obj-abm_obj)/abm_obj,5); 
-#             log["imp\%_ss{}".format(name_id)] = round((ss_obj-init_obj)/init_obj,5);
-#             log["imp\%_ss_truck{}".format(name_id)] = round((sst_cost-it_cost)/it_cost,5);
-#             log["imp\%_ss_sort{}".format(name_id)] = round((sss_cost-is_cost)/is_cost,5);
-            
-#             log["Init{}_ud_avg".format(name_id)] = init_util_dist_avg; 
-#             log["ss{}_ud_avg".format(name_id)] = ss_util_dist_avg
-
-#         iter_log[itx_ct] = log
-#     return iter_log
-
-# def fixInstanceSCImprovingMGCPInitExperiment(inst_list, constant_dict,
-#                                                         iter_log = None, time_limit = 120): # seconds):
-#     HANDLING_COST = constant_dict["HANDLING_COST"]
-#     TRAILER_CAP = constant_dict["TRAILER_CAP"]
-#     SERVICE_TYPES = constant_dict["SERVICE_TYPES"]
-#     num_days = constant_dict['num_days']
-#     periods_per_day = constant_dict['periods_per_day']
-#     hub_capacity = constant_dict['hub_capacity']
-#     simplified_sort_label = constant_dict['simplified_sort_label']
-#     velocity = constant_dict['velocity']
-    
-#     if (iter_log is None):
-#         iter_log = dict(); itx_ct = 0;
-#     else:
-#         itx_ct = len(iter_log)
-        
-#     for inst in inst_list:
-#         itx_ct+=1 
-#         print(f'=== Iteration {itx_ct} ===')
-#         travel_hr_matrix = dict([(e,inst['distance_matrix'][e]/velocity) for e in inst['distance_matrix']])
-#         # generate time-expanded network from instance
-#         network = tsmd.TimeExpandedNetwork(inst, num_days, periods_per_day, hub_capacity, travel_hr_matrix, 
-#                                    simplified_sort_label,TRAILER_CAP, HANDLING_COST)
-#         network.remove_infeasible_demand()
-#         flatten_dem = [network.demand_by_fc[dc][a] for dc in network.demand_by_fc for a in network.demand_by_fc[dc]]
-#         # create log dict
-#         log = {lk:None for lk in constant_dict['log_keys']}
-        
-#         # log statistic of instance
-#         log['nodes_no'] = len(network.nodes); log['arcs_no'] = len(network.edges);
-#         log['total_dem'] = sum(flatten_dem); log['trail_cap'] = TRAILER_CAP
-#         log['min_dem'] = min(flatten_dem); log['max_dem'] = max(flatten_dem); 
-        
-#         # arc-based model...
-#         abm_obj = None
-        
-#         sample_no = 2
-#         for i in range(sample_no):
-#             # init: random sequence of MGCP 
-#             mgcpinit_id = i + 1
-#             print(f"\n === Instance {itx_ct}, MGCP init-soln {mgcpinit_id} ===");print(" ")
-#             mgcpsolver = tsmd.MarginalCostPathSolver(network,{}, {})
-#             flow_arc_mgcpinit1,flowcom_arc_mgcpinit1 = mgcpsolver.mgcp_construction(plot_network = False, save_to_img = False)
-            
-#             # slope scaling improving heuristics
-#             ss_output = solve_slope_scaling_improvement_from_sol(network, flow_arc_mgcpinit1, flowcom_arc_mgcpinit1, time_limit)
-
-#             # add to solution log
-#             name_id = mgcpinit_id
-#             (init_fa,init_fca) = (flow_arc_mgcpinit1,flowcom_arc_mgcpinit1); 
-#             (ss_obj,ss_fa,ss_fca,ss_iter,ss_rtime) = ss_output;
-            
-#             # calculating obj            
-#             it_cost, is_cost = mgcpsolver.get_obj(init_fa)
-#             init_obj = it_cost + is_cost
-#             sst_cost, sss_cost = mgcpsolver.get_obj(ss_fa)
-#             ss_obj = sst_cost + sss_cost
-            
-#             # trailer util
-#             init_util_dist_avg = get_util_dist_average(init_fa,network.distance_matrix,network.trailer_cap)
-#             ss_util_dist_avg = get_util_dist_average(ss_fa,network.distance_matrix,network.trailer_cap)
-            
-#             log["Init{}_obj".format(name_id)] = init_obj
-#             log["Init{}_truck".format(name_id)] = it_cost
-#             log["Init{}_sort".format(name_id)] = is_cost
-#             log["ss{}_obj".format(name_id)] = ss_obj
-#             log["ss{}_truck".format(name_id)] = sst_cost
-#             log["ss{}_sort".format(name_id)] = sss_cost
-
-#             log["ss{}_iter".format(name_id)] = ss_iter
-#             log["ss{}_rtime".format(name_id)] = ss_rtime
-            
-#             log["Init{}_gap".format(name_id)] = None #round((init_obj-abm_obj)/abm_obj,5); 
-#             log["imp\%_ss{}".format(name_id)] = round((ss_obj-init_obj)/init_obj,5);
-#             log["imp\%_ss_truck{}".format(name_id)] = round((sst_cost-it_cost)/it_cost,5);
-#             log["imp\%_ss_sort{}".format(name_id)] = round((sss_cost-is_cost)/is_cost,5);
-            
-#             log["Init{}_ud_avg".format(name_id)] = init_util_dist_avg; 
-#             log["ss{}_ud_avg".format(name_id)] = ss_util_dist_avg
-
-#         iter_log[itx_ct] = log
-#     return iter_log
-
-# def fixInstanceImprovingOnMultiInitializationExperiment(inst_list, constant_dict,
-#                                                         iter_log = None, time_limit = 120): # seconds):
-#     HANDLING_COST = constant_dict["HANDLING_COST"]
-#     TRAILER_CAP = constant_dict["TRAILER_CAP"]
-#     SERVICE_TYPES = constant_dict["SERVICE_TYPES"]
-#     num_days = constant_dict['num_days']
-#     periods_per_day = constant_dict['periods_per_day']
-#     hub_capacity = constant_dict['hub_capacity']
-#     simplified_sort_label = constant_dict['simplified_sort_label']
-#     velocity = constant_dict['velocity']
-    
-#     if (iter_log is None):
-#         iter_log = dict(); itx_ct = 0;
-#     else:
-#         itx_ct = len(iter_log)
-        
-#     for inst in inst_list:
-#         itx_ct+=1 
-#         print(f'=== Iteration {itx_ct} ===')
-#         travel_hr_matrix = dict([(e,inst['distance_matrix'][e]/velocity) for e in inst['distance_matrix']])
-#         # generate time-expanded network from instance
-#         network = tsmd.TimeExpandedNetwork(inst, num_days, periods_per_day, hub_capacity, travel_hr_matrix, 
-#                                    simplified_sort_label,TRAILER_CAP, HANDLING_COST)
-#         network.remove_infeasible_demand()
-#         flatten_dem = [network.demand_by_fc[dc][a] for dc in network.demand_by_fc for a in network.demand_by_fc[dc]]
-#         # create log dict
-#         log = {lk:None for lk in constant_dict['log_keys']}
-        
-#         # log statistic of instance
-#         log['nodes_no'] = len(network.nodes); log['arcs_no'] = len(network.edges);
-#         log['total_dem'] = sum(flatten_dem); log['trail_cap'] = TRAILER_CAP
-#         log['min_dem'] = min(flatten_dem); log['max_dem'] = max(flatten_dem); 
-        
-#         # arc-based model...
-#         abm_obj = None
-        
-#         sample_no = 2
-#         ct_id = 0
-#         for i in range(sample_no):
-#             # init: random sequence of MGCP 
-#             mgcpinit_id = ct_id
-#             print(f"\n === Instance {itx_ct}, MGCP init-soln {mgcpinit_id} ===");print(" ")
-#             mgcpsolver = tsmd.MarginalCostPathSolver(network,{}, {}, {})
-#             flow_arc_mgcpinit1,flowcom_arc_mgcpinit1 = mgcpsolver.mgcp_construction(plot_network = False, save_to_img = False)
-#             (mgcp1_sol,ss1_sol) = solveMultiHeuristicsFromSol(network, flow_arc_mgcpinit1,flowcom_arc_mgcpinit1,
-#                                                               mgcpsolver.alpha, time_limit)
-#             # add to solution log
-#             add_solution_stats_for_output(log,abm_obj,(flow_arc_mgcpinit1,flowcom_arc_mgcpinit1),mgcp1_sol,ss1_sol,network,str(mgcpinit_id))
-#             ct_id+=1
-
-#             # NEED ADJUSTMENT: NOT WORKING BECAUSE MGCP NEEDS IN_TREE CONSTRAINT
-#             # # init: first iter sc
-#             # sc1init_id = ct_id
-#             # print(f"\n === Instance {itx_ct}, SC init-sol {sc1init_id} ===");print(" ")
-#             # scsolver = tsmd.SlopeScalingSolver(network, {}, {})
-#             # min_sol, sc_log = scsolver.concurrent_slope_scalling_with_time_limit(time_limit = time_limit,iteration_limit=1, plot_slope=False)
-#             # flow_arc_scinit1,flowcom_arc_scinit1 = (min_sol['flow_arc'],min_sol['flowcom_arc'])
-#             # (mgcp1_sol,sc1_sol) = solveMultiHeuristicsFromSol(network, flow_arc_scinit1,flowcom_arc_scinit1, time_limit)
-#             # # add to solution log
-#             # add_solution_stats_for_output(log,abm_obj,(flow_arc_scinit1,flowcom_arc_scinit1),mgcp1_sol,sc1_sol,network,str(sc1init_id))
-#             # ct_id+=1
-
-#         # init: SPP iter
-#         sppinit_id = ct_id
-#         print(f"\n === Instance {itx_ct}, SPP init-sol {sppinit_id} ===");print(" ")
-#         sssolver = tsmd.SlopeScalingSolver(network, {}, {})
-#         spp_fa_init, spp_fca_init, _ = sssolver.get_initial_shortest_path_sol()
-#         (mgcp1_sol,ss1_sol) = solveMultiHeuristicsFromSol(network, spp_fa_init, spp_fca_init, 
-#                                                             sssolver.alpha, time_limit)
-#         # add to solution log
-#         add_solution_stats_for_output(log,abm_obj,(spp_fa_init,spp_fca_init),mgcp1_sol,ss1_sol,network,str(sppinit_id))
-
-#         iter_log[itx_ct] = log
-#     return iter_log
-
-# def solveMultiHeuristicsFromSol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit ):
-#     # mgcp improving heuristics
-#     mgcp_output = solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit)
-    
-#     # slope scaling improving heuristics
-#     ss_output = solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit)
-#     return mgcp_output, ss_output
-
-# def add_solution_stats_for_output(output,abm_obj,init_sol,mgcp_sol,ss_sol,network,name_id=""):
-#     (init_fa,init_fca) = init_sol; 
-#     (mgcp_obj,mgcp_fa,mgcp_fca,mgcp_iter,mgcp_rtime) = mgcp_sol;
-#     (ss_obj,ss_fa,ss_fca,ss_iter,ss_rtime) = ss_sol;
-    
-#     # solver for cal obj
-#     mgcpsolver = tsmd.MarginalCostPathSolver(network, init_sol[0], init_sol[1],{})
-    
-#     init_obj = mgcpsolver.get_obj(init_fa)
-#     mgcp_obj = mgcpsolver.get_obj(mgcp_fa)
-#     ss_obj = mgcpsolver.get_obj(ss_fa)
-    
-#     # trailer util
-#     init_util_dist_avg = get_util_dist_average(init_fa,network.distance_matrix,network.trailer_cap)
-#     mgcp_util_dist_avg = get_util_dist_average(mgcp_fa,network.distance_matrix,network.trailer_cap)
-#     ss_util_dist_avg = get_util_dist_average(ss_fa,network.distance_matrix,network.trailer_cap)
-    
-#     output["Init{}_obj".format(name_id)] = init_obj
-#     output["mgcp{}_obj".format(name_id)] = mgcp_obj
-#     output["ss{}_obj".format(name_id)] = ss_obj
-    
-#     output["mgcp{}_iter".format(name_id)] = mgcp_iter
-#     output["ss{}_iter".format(name_id)] = ss_iter
-#     output["mgcp{}_rtime".format(name_id)] = mgcp_rtime
-#     output["ss{}_rtime".format(name_id)] = ss_rtime
-    
-#     output["Init{}_gap".format(name_id)] = None#round((init_obj-abm_obj)/abm_obj,5); 
-#     output["imp\%_mgcp{}".format(name_id)] = round((mgcp_obj-init_obj)/init_obj,5); 
-#     output["imp\%_ss{}".format(name_id)] = round((ss_obj-init_obj)/init_obj,5);
-    
-#     output["Init{}_ud_avg".format(name_id)] = init_util_dist_avg; 
-#     output["mgcp{}_ud_avg".format(name_id)] = mgcp_util_dist_avg; 
-#     output["ss{}_ud_avg".format(name_id)] = ss_util_dist_avg
-'''
