@@ -26,6 +26,13 @@ import concurrent.futures
 
 import heapq
 
+import folium
+import geopandas as gpd
+import geopy
+
+from collections import defaultdict
+
+
 COLOR_PALETTE = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
@@ -94,6 +101,19 @@ class TimeExpandedNetwork:
             inbound_arc = self.edges_df[self.edges_df[1]==n]['edges'].values
             if len(inbound_arc)>0 :
                 self.inbound_edges[n] = inbound_arc
+        
+        # sets of edges for multi-phase SS
+        self.update_phases_for_multi_phases()
+        # self.EOLtoBBs = self.getEOLtoBBs()
+        # self.BBtoEOLs = self.getBBtoEOLs()
+        # self.BBtoBBs = self.getBBtoBBs()
+        # self.EOLtoEOLs = self.getEOLtoEOLs()
+    
+    def update_phases_for_multi_phases(self):
+        self.EOLtoBBs = self.getEOLtoBBs()
+        self.BBtoEOLs = self.getBBtoEOLs()
+        self.BBtoBBs = self.getBBtoBBs()
+        self.EOLtoEOLs = self.getEOLtoEOLs()
 
 
     def get_nodes_edges_between_days(self, start_day, end_day):
@@ -136,6 +156,28 @@ class TimeExpandedNetwork:
         rem_dem = sum([self.demand_by_fc[dc][a] for dc in self.demand_by_fc for a in self.demand_by_fc[dc]])
         print(f"removed infeasible demands of value {del_val}, remaining demand {rem_dem}")
     
+    # multi-phases SS
+    def getEOLtoBBs(self):
+        ts_edges = pd.DataFrame(self.edges.keys())
+        ts_edges['org_sort'] = ts_edges[0].apply(lambda x: x[2])
+        return ts_edges.loc[ts_edges['org_sort']==1][[0,1]].values
+
+    def getBBtoEOLs(self):
+        ts_edges = pd.DataFrame(self.edges.keys())
+        ts_edges['des_sort'] = ts_edges[1].apply(lambda x: x[2])
+        return ts_edges.loc[ts_edges['des_sort']==2][[0,1]].values
+
+    def getBBtoBBs(self):
+        ts_edges = pd.DataFrame(self.edges.keys())
+        ts_edges['org_sort'] = ts_edges[0].apply(lambda x: x[2])
+        ts_edges['des_sort'] = ts_edges[1].apply(lambda x: x[2])
+        return ts_edges.loc[(ts_edges['des_sort']!=2) & (ts_edges['org_sort']!=1)][[0,1]].values
+
+    def getEOLtoEOLs(self):
+        ts_edges = pd.DataFrame(self.edges.keys())
+        ts_edges['org_sort'] = ts_edges[0].apply(lambda x: x[2])
+        ts_edges['des_sort'] = ts_edges[1].apply(lambda x: x[2])
+        return ts_edges.loc[(ts_edges['des_sort']==2) & (ts_edges['org_sort']==1)][[0,1]].values
 
 
     def get_nodes(self):
@@ -143,8 +185,7 @@ class TimeExpandedNetwork:
 
     def get_edges(self):
         return self.edges
-
-
+    
 def get_obj(flow_arc, distance_matrix, trailer_cap, handling_cost, obj_mode, trailer_coeff = 1):
     ''' Global function for calculate the objective cost
     accept two modes: step or fix
@@ -260,6 +301,26 @@ def update_alpha_path_based_solution(path_sol, alpha):
 
 def convert_node_path_to_arc_path(npath):
     return [(npath[i],npath[i+1]) for i in range(len(npath)-1)]
+
+class MultiHeuristicSolver:
+    def __init__(self, network,flow_arc,flowcom_arc, alpha, obj_mode):
+        self.network = network
+        self.flow_arc = flow_arc
+        self.flowcom_arc = flowcom_arc
+        self.distance_matrix = network.distance_matrix
+        self.trailer_cap = network.trailer_cap
+        self.handling_cost = network.handling_cost
+        self.deleted_demand = []
+        self.alpha = alpha
+        self.obj_mode = obj_mode
+        self.logobjval = {}
+
+        # some text for labeling the graph
+        self.init_proc_text = ""
+
+        # plot objs
+        self.plot_objs = {}
+
 
 class MarginalCostPathSolver:
     def __init__(self, network,flow_arc,flowcom_arc, alpha, obj_mode):
@@ -548,12 +609,12 @@ class MarginalCostPathSolver:
         old_cost = 0                                                
         while ((time.time()-start_timer)< time_limit):
             for (a,_) in sorted_target_arcs:
-                iteration+=1
                 if ((time.time()-start_timer)> time_limit): 
                     hit_limit_in_for = True; break;
                 if (self.flow_arc[a] < 1e-5):
                     print("Zero flow, skip!!")
                     continue
+                iteration+=1
                 # different modes  
                 cost = self.mgcp_single_lane_improvement(a, reflow_mode)
                 # if (reflow_mode == "default"):
@@ -643,60 +704,6 @@ class MarginalCostPathSolver:
             '''
         else:
             raise Exception("Invalid mode")
-        
-    '''
-    old version
-    def mgcp_single_lane_improvement_with_grasp(self, lane_arc,):
-        (ots_node, dts_node) = lane_arc
-        (ot_cost,os_cost) = self.get_obj(self.flow_arc)
-        o_cost = ot_cost + os_cost
-        # return dict each dc and volume that needs to be reflowed
-        dc_flow_removed, cost_removed, dc_removed_path = self.remove_flowlane_from_downstream(lane_arc)
-
-        # with grasp mode, will receive multiple dc sequences to try (default set to 4 trails)
-        dc_sequence_collections = self._arrange_dc_for_reflow(dc_flow_removed, mode="grasp")
-        # submit job to perform concurrently
-        repath_results = self.concurrent_dc_sequence_mgcp_submission(dc_sequence_collections, ots_node)
-        # repath_results = self.sequencial_dc_sequence_mgcp_submission(dc_sequence_collections, ots_node)
-        # get the best(min) batch result (sorted by cost_added)
-        sorted_results = sorted(repath_results, key=lambda x:x[0])
-        (cost_added, dc_mgcp_repath, re_fa, re_fca, re_dc_seq) = sorted_results[0]
-        
-        aft_cost,afs_cost = self.get_obj(re_fa)
-        cost_af_repath = aft_cost + afs_cost
-        print(f'Lane {lane_arc},'+
-               f'cost-change: {round(cost_added+cost_removed,3)},'+
-               f'(recheck cost-change: {round(cost_af_repath-o_cost,3)}),'+
-                f'({round((cost_added+cost_removed)*100/(o_cost),2)} %)')
-
-        if (cost_added+cost_removed<=-1e-5):
-            # replace flow_arc and flowcom_arc with the result
-            self.flow_arc = re_fa
-            self.flowcom_arc = re_fca
-            # update alpha
-            for (dc,f) in re_dc_seq: 
-                # updating for old path (removed)
-                update_alpha_removal(lane_arc[1], dc, self.alpha, self.network, self.flowcom_arc)
-                # updating for new path
-                path = dc_mgcp_repath[dc]
-                first_org = path[1]
-                update_alpha(first_org, dc, self.alpha, self.network, self.flowcom_arc)
-        else:
-            print("Cost increased!, undo to original plan")
-            for (dc,f) in re_dc_seq: 
-                # don't need this because we didn't add flow to self.flow_arc and self.flowcom_arc yet
-                # remove_path = dc_mgcp_repath[dc]
-                # self.add_flow_to_path(-f,dc,remove_path,self.flow_arc,self.flowcom_arc)
-
-                # just add them back to their original paths
-                readd_path = dc_removed_path[dc]
-                self.add_flow_to_path(f,dc,readd_path,self.flow_arc,self.flowcom_arc)
-            aft_cost,afs_cost = self.get_obj(self.flow_arc,)
-            cost_af_repath = aft_cost + afs_cost
-
-        # self.validate_demand_delivered(self.flow_arc,self.flowcom_arc)
-        return cost_af_repath
-    '''
 
     def sequencial_dc_sequence_mgcp_submission(self, dc_sequence_collections, ots_node):
         repath_results = []
@@ -940,6 +947,28 @@ class MarginalCostPathSolver:
         if (sum(dummy_flow_arc.values())>1e-5):
             print(dummy_flow_arc.values())
             raise Exception("Violate demand satisfaction")
+        
+    def convert_arc_sol_to_path_sol(self, flowcom_arc=None):
+        ''' 
+            only support intree solution, if not, path sol cannot be reconstructed
+        '''
+        path_sol = {}
+        print("Reconstructing path solution...")
+        no_dc = len(self.network.demand_by_fc)
+        dc_cnt = 0
+        for dc in self.network.demand_by_fc:
+            if (dc_cnt % int(0.1*no_dc) == 0):
+                print(f'reconstructed paths done for {dc_cnt}/{no_dc} dcs')
+
+            for org_h in self.network.demand_by_fc[dc]:
+                flow = self.network.demand_by_fc[dc][org_h]
+                dco_key = (dc, org_h)
+                # reconstruct path
+                path = self.find_downstream_path(org_h,dc[0],dc,flowcom_arc)
+                path_sol[dco_key] = (flow, path)
+            dc_cnt+=1
+
+        return path_sol
             
     def validate_intree_violation(self, flow_arc=None, flowcom_arc=None):
         ''' validate intree path for each flow class'''
@@ -1009,7 +1038,8 @@ class SlopeScalingSolver:
         
         # initialize rho with the base slope
         self.initialize_rho()
-        self.init_obj = sum(list(get_obj(flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)))
+        self.tcost, self.scost = get_obj(flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
+        self.init_obj = self.tcost + self.scost
         self.alpha = dict()
 
         # some text for labeling the graph
@@ -1018,6 +1048,15 @@ class SlopeScalingSolver:
         # dict for plot object
         self.plot_objs = {}
 
+        # dict store size of each edge group
+        self.edge_set = {
+            "P0": self.timespacearcs,
+            "P1": self.network.EOLtoBBs,
+            "P2": self.network.BBtoEOLs,
+            "P3": self.network.BBtoBBs,
+            "P4": self.network.EOLtoEOLs,
+        } 
+        
         
     def initialize_rho(self, init_rho = None):
         print('Initialize rho...')
@@ -1030,8 +1069,8 @@ class SlopeScalingSolver:
         else:
             self.rho = deepcopy(init_rho)
         
-    def update_rho(self, flow_arc = None, flowcom_arc = None ):
-        self.rho = self.get_linearized_slope(self.rho, flow_arc, flowcom_arc)
+    # def update_rho(self, flow_arc = None, flowcom_arc = None ):
+    #     self.rho = self.get_linearized_slope(self.rho, flow_arc, flowcom_arc)
     
     def get_linearized_slope(self, prev_rho, flow_arc = None, flowcom_arc = None ):
         if (flow_arc == None) and (flowcom_arc == None):
@@ -1099,12 +1138,18 @@ class SlopeScalingSolver:
                     sol_diff+=abs(f_fc_old-f_fc_new)
         return sol_diff
     
-    def get_initial_shortest_path_sol(self, fixing_intree = True):
+    def get_initial_shortest_path_sol(self, fixing_intree = True, arrival_forcing = "earliest"):
         '''heuristic construction using shortest path separated by flow class'''
-        des_org_com = self.get_time_space_des_exact_day_agg_feasible_orgs()
+        # des_org_com = self.get_time_space_des_exact_day_agg_feasible_orgs()
+        if (arrival_forcing == "earliest"):
+            des_agg_orgs = self.get_time_space_des_agg_feasible_orgs()
+        elif (arrival_forcing == "exactdate"):
+            des_agg_orgs = self.get_time_space_des_exact_day_agg_feasible_orgs()
+        else:
+            raise Exception(f"Invalid arrival forcing argument {arrival_forcing}")
         spp_input_list = []
         # construct input set for the spp solver: multiple ts-orgs -> single ts-des
-        for (des,orgs) in des_org_com.items():
+        for (des,orgs) in des_agg_orgs.items():
             sday = min([o[1] for d,o,f in orgs])
             eday = des[1]
             sub_nodes,sub_edges = self.network.get_nodes_edges_between_days(sday,eday)
@@ -1135,13 +1180,19 @@ class SlopeScalingSolver:
                         feasible_path[dcof].append((path,label[dcof[1]]))
                     else:
                         feasible_path[dcof] = [(path,label[dcof[1]])]
-                else: 
-                    # does not exist path that can deliver on time, del demand
+                # else: 
+                #     # does not exist path that can deliver on time, del demand
+                #     self.delete_fc(dcof[0],dcof[1])
+        # check now and delete fc that has no feasible path
+        for result_item in shortest_path_trees:
+            (paths,label) = result_item
+            for (dcof,path) in paths:
+                if not(dcof in feasible_path):
                     self.delete_fc(dcof[0],dcof[1])
                     
         # update the flow
         for dcof in feasible_path:
-            sorted_list = sorted(feasible_path[dcof], key=lambda x:(x[1],-x[0][-1][1]))
+            sorted_list = sorted(feasible_path[dcof], key=lambda x:(x[1],x[0][-1][1]))
             path,l = sorted_list[0]
             # shortcut if it pass through (arrive!) at des, sort-1 early
             path = self.__shortcutting_path(dcof[0],path)
@@ -1173,13 +1224,15 @@ class SlopeScalingSolver:
         ''' run sequencial slope scaling with time limit (one dc at a time)'''
         TIMELIMIT_MET = False; TOLERANCE_MET = False
         print(f'Slope scaling w timelimit {time_limit}')
-        iter_ct = 0
+        iter_ct = 1
         iteration_log = dict()
-        iteration_log[-1] = {
+        iteration_log[0] = {
                         'flow_arc': dict(),
                         'flowcom_arc': dict(),
                         'rho_arc':self.rho,
-                        'obj': self.init_obj
+                        'obj': self.init_obj,
+                        'tcost': self.tcost,
+                        'scost': self.scost
                        }
         # init the slope (cost) on each edge
         self.update_rho()
@@ -1278,25 +1331,140 @@ class SlopeScalingSolver:
         # plt.legend(['Iter{}'.format(i) for i in range(0,len(iter_log)-1)])
 
         fig, ax = plt.subplots()
-        line_color = random.choice(COLOR_PALETTE)  # Random hexadecimal color
+        line_color1 = random.choice(COLOR_PALETTE)  # Random hexadecimal color
+        line_color2 = random.choice(COLOR_PALETTE)  # Random hexadecimal color
 
-        se_roundup_cost = pd.Series([iter_log[i]['obj'] for i in range(0,len(iter_log))])
-        se_approx_cost = pd.Series([iter_log[i]['appcost'] for i in range(0,len(iter_log))])
-        ax.plot(se_roundup_cost, color=line_color,label=f"{self.init_proc_text}-roundup-obj")
-        ax.plot(se_approx_cost, color=line_color,linestyle='--', label=f"{self.init_proc_text}-approx-obj")
+        # separate data by phase
+        roundup_cost_series = []; roundup_cost_basket = []
+        approx_cost_series = []; approx_cost_basket = []
+        phases_series = ['P0']
+        curr_phase = ''
+        prev_phase = iter_log[0]['phase']
+        for i in range(0,len(iter_log)):
+            curr_phase = iter_log[i]['phase']
+            roundupcost = iter_log[i]['obj']
+            approxcost = iter_log[i]['appcost']
+            if (curr_phase!=prev_phase):
+                phases_series.append(curr_phase)
+                roundup_cost_series.append(roundup_cost_basket)
+                approx_cost_series.append(approx_cost_basket)
+                # reset the basket
+                roundup_cost_basket = [roundupcost]
+                approx_cost_basket = [approxcost]
+            else:
+                roundup_cost_basket.append(roundupcost)
+                approx_cost_basket.append(approxcost)
+            prev_phase = curr_phase
+            # print(curr_phase,phases_series)
+            # print(roundup_cost_basket,roundup_cost_series)
+        roundup_cost_series.append(roundup_cost_basket)
+        approx_cost_series.append(approx_cost_basket)
+
+        begin_x = 0
+        end_x = 0
+        for i in range(len(phases_series)):
+            end_x += len(roundup_cost_series[i])
+            if i % 2 == 0:
+                linesty = '-'
+            else:
+                linesty = '--'
+            # print(phases_series[i],range(begin_x,end_x),roundup_cost_series[i],linesty)
+            if (i == len(phases_series)-1):
+                x_range = [j for j in range(begin_x,end_x)]
+                y_roundup_range = roundup_cost_series[i]
+                y_app_range = approx_cost_series[i]
+            else:
+                x_range = [j for j in range(begin_x,end_x+1)]
+                y_roundup_range = roundup_cost_series[i]+[roundup_cost_series[i+1][0]]
+                y_app_range = approx_cost_series[i]+[approx_cost_series[i+1][0]]
+            
+            ax.plot(x_range,y_roundup_range, color=line_color1,linestyle=linesty, label=f"{self.init_proc_text}-roundup-obj-{phases_series[i]}")
+            ax.plot(x_range,y_app_range, color=line_color2,linestyle=linesty, label=f"{self.init_proc_text}-approx-obj-{phases_series[i]}")
+            begin_x = end_x
+
         ax.legend(loc="upper left", bbox_to_anchor=(1,1))
         ax.set_xlabel("iterations",  size = 20)
         ax.set_ylabel("obj", size = 20)
 
         self.plot_objs[self.init_proc_text] = (fig, ax)
 
-    def concurrent_slope_scalling_with_time_limit(self, time_limit = 120, iteration_limit = np.inf, plot_slope = False):
+    def update_rho(self, updating_edges, flow_arc = None, flowcom_arc = None, phase = "P0",release_all_edges_flag=False):
+        start_time = time.time()
+        # calculate all rhos
+        new_rho = self.get_linearized_slope(self.rho, flow_arc, flowcom_arc)
+        size_of_new_arcs = 0
+        # specify edges
+        if (phase == "P0"):
+            # update rho for all edges
+            updating_edges = self.timespacearcs
+            self.rho = new_rho
+        elif (phase != "P4"):
+            if phase == "P1":
+                # get EOL -> BBs edges
+                new_edges = pd.DataFrame(self.network.EOLtoBBs)
+                size_of_new_arcs = len(new_edges)
+            elif phase == "P2":
+                # get BB -> EOLs edges
+                new_edges = pd.DataFrame(self.network.BBtoEOLs)
+                size_of_new_arcs = len(new_edges)
+            elif phase == "P3":
+                # get BB -> BB edges
+                new_edges = pd.DataFrame(self.network.BBtoBBs)
+                size_of_new_arcs = len(new_edges)
+            else:
+                raise Exception(f"Invalid phase {phase}")
+            # update edge and rho
+            updating_edges_set = set(updating_edges)
+            # Identify rows to keep using vectorized operations
+            mask = new_edges.set_index([0, 1]).index.isin(updating_edges_set)
+            # Filter the DataFrame based on the mask: focus on not previously in the group
+            new_edges = new_edges[~mask]
+            # Create a dictionary to store the maximum values for each group
+            max_values = {}
+            if not(release_all_edges_flag):
+                # Iterate over groups and find the maximum link: groupby 0(org)
+                for k1, group_df in new_edges.groupby(0):
+                    # distance as a key
+                    max_key = max(group_df[1], key=lambda k: self.distance_matrix[_to_physical_arc((k1, k))])
+                    # new rho as a key
+                    # max_key = max(group_df[1], key=lambda k: new_rho[(k1, k)])
+                    max_values[k1] = (k1, max_key)
+                # Update the updating_edges list with maximum links
+                updating_edges.extend(max_values.values())
+            else:
+                # add all remaining edges
+                updating_edges = updating_edges + [tuple(lst) for lst in new_edges.values]
+                release_all_edges_flag = False
+            
+            # Bulk update approach
+            updating_dict = dict.fromkeys(updating_edges)
+            for key in updating_dict:
+                self.rho[key] = new_rho[key]
+
+        elif (phase == "P4"):
+            # just check if eol-eol edge ever added to the updating set
+            new_edges_array = self.network.EOLtoEOLs
+            size_of_new_arcs = len(new_edges_array)
+            if (tuple(new_edges_array[0]) not in updating_edges):
+                # add all edges simulteneously
+                updating_edges = updating_edges + [tuple(lst) for lst in new_edges_array]
+            # Bulk update approach
+            updating_dict = dict.fromkeys(updating_edges)
+            for key in updating_dict:
+                self.rho[key] = new_rho[key]
+        
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"Elapsed time {phase}: {elapsed_time} seconds, size of edges {size_of_new_arcs}")
+        return updating_edges,release_all_edges_flag
+
+    def concurrent_slope_scalling_multiphase_with_time_limit(self, time_limit = 120, iteration_limit = np.inf, phases = ['P0'] , plot_slope = False):
         ''' run concurrent slope scaling with time limit (one dc at a time)'''
         TIMELIMIT_MET = False; TOLERANCE_MET = False; ITERATION_MET = False;
-        print(f'(Con)Slope scaling w timelimit {time_limit},  iterlimit {iteration_limit}')
-
+        print(f'(Con)Slope scaling w timelimit {time_limit},  iterlimit {iteration_limit}, phases {phases}')
+        
         # init the slope (cost) on each edge
-        self.update_rho()
+        self.update_rho([])
 
         iter_ct = 1
         iteration_log = dict()
@@ -1305,13 +1473,15 @@ class SlopeScalingSolver:
                         'flowcom_arc': self.flowcom_arc,
                         'rho_arc':self.rho,
                         'obj': self.init_obj,
-                        'appcost': self.get_approx_obj(self.flow_arc,self.rho)
-                       }
-        
-        
+                        'tcost': self.tcost,
+                        'scost': self.scost,
+                        'appcost': self.get_approx_obj(self.flow_arc,self.rho),
+                        'phase':"P0"
+                    }
+
         # storage of the best solution
         min_sol_dict = {'obj': np.inf}
-        
+
         # get o-d pair agg by des from current solution
         t_s = time.time()
         spp_input_list = []
@@ -1324,6 +1494,17 @@ class SlopeScalingSolver:
             spp_input_list.append(input_set)
         # print(f'constructing batch inputs:{time.time()-t_s}')
         
+        # multi-phase configuration
+        phase_tol_flg = {p:False for p in phases}
+        phase_tol_icnt = {p:0 for p in phases}
+        processed_phases = []
+        # get initial phase to work on
+        curr_phase = phases.pop(0)
+        processed_phases.append(curr_phase)
+        updating_edges = []
+        cur_total_edge_size = len(self.edge_set[curr_phase])
+        release_all_edges_flag = False
+        
         start_timer = time.time()
         while not (TIMELIMIT_MET or TOLERANCE_MET or ITERATION_MET):
             flow_arc_new = dict()
@@ -1335,19 +1516,24 @@ class SlopeScalingSolver:
             t_s = time.time()
             # Sequentially update the network instance based on the computed shortest paths.
             # construct the dict that store only the best path 
-            feasible_path = dict()
-            for result_item in shortest_path_trees:
-                (paths,label) = result_item
-                for (dcof,path) in paths:
+            feasible_path = defaultdict(list)
+            for paths, label in shortest_path_trees:
+                for dcof, path in paths:
                     if path is not None:
-                        if dcof in feasible_path.keys():
-                            feasible_path[dcof].append((path,label[dcof[1]]))
-                        else:
-                            feasible_path[dcof] = [(path,label[dcof[1]])]
+                        feasible_path[dcof].append((path, label[dcof[1]]))
+            # for result_item in shortest_path_trees:
+            #     (paths,label) = result_item
+            #     for (dcof,path) in paths:
+            #         if path is not None:
+            #             if dcof in feasible_path.keys():
+            #                 feasible_path[dcof].append((path,label[dcof[1]]))
+            #             else:
+            #                 feasible_path[dcof] = [(path,label[dcof[1]])]
 
             # update the flow
-            for dcof in feasible_path:
-                sorted_list = sorted(feasible_path[dcof], key=lambda x:(x[1],x[0][-1][1]))
+            for dcof, path_list in feasible_path.items():
+                # Sort the path_list based on the specified key
+                sorted_list = sorted(path_list, key=lambda x: (x[1], x[0][-1][1]))
                 # print(sorted_list)
                 path,l = sorted_list[0]
                 self.add_flow_to_path(dcof[2], dcof[0], path, flow_arc_new, flowcom_arc_new)
@@ -1368,15 +1554,16 @@ class SlopeScalingSolver:
             iteration_log[iter_ct]['scost'] = scost
             iteration_log[iter_ct]['appcost'] = approx_cost
             iteration_log[iter_ct]['timestamp'] = time.time() - start_timer
+            iteration_log[iter_ct]['phase'] = curr_phase
 
             # update the slop for next iteration
-            self.update_rho(flow_arc_new, flowcom_arc_new)
+            updating_edges,release_all_edges_flag = self.update_rho(updating_edges,flow_arc_new, flowcom_arc_new,curr_phase,release_all_edges_flag)
 
             if (min_sol_dict['obj']>cost_new):
                 print('Improved solution found, saving...')
                 min_sol_dict = iteration_log[iter_ct].copy()
-                       
-                
+
+
             # update terminating condition
             sol_diff = np.inf
             if (iter_ct-1>0):
@@ -1389,21 +1576,158 @@ class SlopeScalingSolver:
                 del iteration_log[iter_ct-2]['rho_arc']
                 del iteration_log[iter_ct-2]['path_sol']
 
-            
             iter_ct+=1
 
-            if (sol_diff <= 1e-5): TOLERANCE_MET = True
+            if (sol_diff <= 1e-5): TOLERANCE_MET = (True & (len(phases)==0))
             if ((time.time()-start_timer)> time_limit): TIMELIMIT_MET = True
             if (iteration_limit <= iter_ct): ITERATION_MET = True
-            
-            print("SC-Iteration {}: {} {}, change {}".format(iter_ct,TOLERANCE_MET,TIMELIMIT_MET,cost_new-cost_old))
-            print(f"Prev solution SPP cost: {approx_cost}")
+
+            print(f"SC-Iteration {iter_ct}: TOL-{TOLERANCE_MET} TIME-{TIMELIMIT_MET}, PHASE-{curr_phase}, change {cost_new-cost_old}, LINK LEN-{len(updating_edges)}")
+            # print(f"Prev solution SPP cost: {approx_cost}")
             print(f"New cost: {cost_new}, new approx cost: {self.get_approx_obj(flow_arc_new,self.rho)}")
+            
+            # phase tol checking
+            cost_diff = cost_new-cost_old
+            if (abs(cost_diff/cost_old) < 0.003): 
+                phase_tol_icnt[curr_phase] += 1
+            else:
+                phase_tol_icnt[curr_phase] = 0 
+            
+            if ((phase_tol_icnt[curr_phase] >= 10) and (len(phases)>0)):
+                if (len(updating_edges) < cur_total_edge_size):
+                    print(f"Tolerance met, add all edges of curr phases: {len(updating_edges)}/{cur_total_edge_size}")
+                    # reset the flag and tol cnt
+                    release_all_edges_flag = True
+                    phase_tol_icnt[curr_phase] = 0 
+                else:
+                    print(f"Tolerance met, and all edges included. Phase changes: Changing phase from {curr_phase} to {phases[0]}")
+                    curr_phase = phases.pop(0)
+                    processed_phases.append(curr_phase)
+                    cur_total_edge_size = len(set([tuple(e) for p in processed_phases for e in self.edge_set[p]]))
             
         #### Plot stats
         if (plot_slope):
             self.plot_stat(iteration_log)
         return min_sol_dict, iteration_log
+        
+
+
+
+
+    # def concurrent_slope_scalling_with_time_limit(self, time_limit = 120, iteration_limit = np.inf, plot_slope = False):
+    #     ''' run concurrent slope scaling with time limit (one dc at a time)'''
+    #     TIMELIMIT_MET = False; TOLERANCE_MET = False; ITERATION_MET = False;
+    #     print(f'(Con)Slope scaling w timelimit {time_limit},  iterlimit {iteration_limit}')
+
+    #     # init the slope (cost) on each edge
+    #     self.update_rho()
+
+    #     iter_ct = 1
+    #     iteration_log = dict()
+    #     iteration_log[0] = {
+    #                     'flow_arc': self.flow_arc,
+    #                     'flowcom_arc': self.flowcom_arc,
+    #                     'rho_arc':self.rho,
+    #                     'obj': self.init_obj,
+    #                     'appcost': self.get_approx_obj(self.flow_arc,self.rho)
+    #                    }
+        
+        
+    #     # storage of the best solution
+    #     min_sol_dict = {'obj': np.inf}
+        
+    #     # get o-d pair agg by des from current solution
+    #     t_s = time.time()
+    #     spp_input_list = []
+    #     des_agg_orgs = self.get_time_space_des_agg_feasible_orgs()
+    #     for (des,orgs) in des_agg_orgs.items():
+    #         sday = min([o[1] for d,o,f in orgs])
+    #         eday = des[1]
+    #         sub_nodes,sub_edges = self.network.get_nodes_edges_between_days(sday,eday)
+    #         input_set = (sub_nodes,sub_edges,des,orgs)
+    #         spp_input_list.append(input_set)
+    #     # print(f'constructing batch inputs:{time.time()-t_s}')
+        
+    #     start_timer = time.time()
+    #     while not (TIMELIMIT_MET or TOLERANCE_MET or ITERATION_MET):
+    #         flow_arc_new = dict()
+    #         flowcom_arc_new = dict()
+    #         path_solution = dict()
+    #         # solving sc concurrently
+    #         shortest_path_trees = self.concurrent_shortest_path_submission(spp_input_list)
+    #         # print(f'solving shortest paths concurrently:{time.time()-t_s}')
+    #         t_s = time.time()
+    #         # Sequentially update the network instance based on the computed shortest paths.
+    #         # construct the dict that store only the best path 
+    #         feasible_path = dict()
+    #         for result_item in shortest_path_trees:
+    #             (paths,label) = result_item
+    #             for (dcof,path) in paths:
+    #                 if path is not None:
+    #                     if dcof in feasible_path.keys():
+    #                         feasible_path[dcof].append((path,label[dcof[1]]))
+    #                     else:
+    #                         feasible_path[dcof] = [(path,label[dcof[1]])]
+
+    #         # update the flow
+    #         for dcof in feasible_path:
+    #             sorted_list = sorted(feasible_path[dcof], key=lambda x:(x[1],x[0][-1][1]))
+    #             # print(sorted_list)
+    #             path,l = sorted_list[0]
+    #             self.add_flow_to_path(dcof[2], dcof[0], path, flow_arc_new, flowcom_arc_new)
+    #             path_solution[(dcof[0],dcof[1])] = (dcof[2],path)
+
+    #         tcost,scost = get_obj(flow_arc_new,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode); 
+    #         cost_new = tcost+scost 
+    #         cost_old = iteration_log[iter_ct-1]['obj']
+    #         approx_cost = self.get_approx_obj(flow_arc_new,self.rho)
+
+    #         iteration_log[iter_ct] = dict()
+    #         iteration_log[iter_ct]['flow_arc'] = flow_arc_new.copy()
+    #         iteration_log[iter_ct]['flowcom_arc'] = flowcom_arc_new.copy()
+    #         iteration_log[iter_ct]['rho_arc'] = self.rho.copy()
+    #         iteration_log[iter_ct]['path_sol'] = path_solution.copy()
+    #         iteration_log[iter_ct]['obj'] = cost_new
+    #         iteration_log[iter_ct]['tcost'] = tcost
+    #         iteration_log[iter_ct]['scost'] = scost
+    #         iteration_log[iter_ct]['appcost'] = approx_cost
+    #         iteration_log[iter_ct]['timestamp'] = time.time() - start_timer
+
+    #         # update the slop for next iteration
+    #         self.update_rho(flow_arc_new, flowcom_arc_new)
+
+    #         if (min_sol_dict['obj']>cost_new):
+    #             print('Improved solution found, saving...')
+    #             min_sol_dict = iteration_log[iter_ct].copy()
+                       
+                
+    #         # update terminating condition
+    #         sol_diff = np.inf
+    #         if (iter_ct-1>0):
+    #             sol_diff = self.get_sol_diff(flowcom_arc_new,iteration_log[iter_ct-1]['flowcom_arc'])
+
+    #         # after saving, clear large variable to save memory: flow_arc, flowcom_arc, path_sol of previous iteration
+    #         if (iter_ct > 2): 
+    #             del iteration_log[iter_ct-2]['flow_arc']
+    #             del iteration_log[iter_ct-2]['flowcom_arc']
+    #             del iteration_log[iter_ct-2]['rho_arc']
+    #             del iteration_log[iter_ct-2]['path_sol']
+
+            
+    #         iter_ct+=1
+
+    #         if (sol_diff <= 1e-5): TOLERANCE_MET = True
+    #         if ((time.time()-start_timer)> time_limit): TIMELIMIT_MET = True
+    #         if (iteration_limit <= iter_ct): ITERATION_MET = True
+            
+    #         print("SC-Iteration {}: {} {}, change {}".format(iter_ct,TOLERANCE_MET,TIMELIMIT_MET,cost_new-cost_old))
+    #         print(f"Prev solution SPP cost: {approx_cost}")
+    #         print(f"New cost: {cost_new}, new approx cost: {self.get_approx_obj(flow_arc_new,self.rho)}")
+            
+    #     #### Plot stats
+    #     if (plot_slope):
+    #         self.plot_stat(iteration_log)
+    #     return min_sol_dict, iteration_log
 
     def concurrent_shortest_path_submission(self, spp_input_list):
         # Create a concurrent executor (you can choose between ThreadPoolExecutor or ProcessPoolExecutor).
@@ -1851,6 +2175,8 @@ def dijkstra_shortest_path_tree(nodes, edges, dist_mat, sink, dcofs):
 
 # MIP model
 
+
+
 # FLAT MODEL
 class timespace_LTL_model():
     def __init__(self, _nodes, _arcs, _dist_mat, _desagg_commodities, _demand_by_fc, _constant_dict,_model_name = "flat_net"):
@@ -1985,7 +2311,18 @@ def plot_time_expanded_network(network):
         G.add_edge(edge[0], edge[1], weight=data['weight'])
 
     # Define node positions for better visualization
-    pos = {node: ((node[1]+(node[2]/4)), -int(node[0].split("_")[-1])) for node in G.nodes()}
+    node_dict = G.nodes()
+    node_keys = list(node_dict.keys())
+    node_by_buildings = dict()
+    for n in node_keys:
+        b = n[0]
+        if (b in node_by_buildings):
+            node_by_buildings[b].append(n)
+        else:
+            node_by_buildings[b] = [n]
+
+    building_keys = list(node_by_buildings.keys())
+    pos = {n:(n[1]+(n[2]/4), -int(b_i))for b_i in range(len(building_keys)) for n in node_by_buildings[building_keys[b_i]]}
 
     # Create labels for nodes (optional)
     node_labels = {node: f"{node[0]}\n{node[1]},{node[2]}" for node, data in G.nodes(data=True)}
@@ -2037,6 +2374,66 @@ def plot_flowarcs_on_time_expanded_network(network, flowarcs):
 
 
 from matplotlib.patches import Patch
+def plot_paths_on_network(base_network, paths, save_name = None, figsize = (16, 8)):
+    # Create a copy of the base network for visualization
+    G = nx.DiGraph()
+    # Add nodes from the graph
+    G.add_nodes_from(base_network.get_nodes())
+    
+
+    # Generate random colors for paths
+    path_colors = {}
+    for dc,path in paths:
+        color = random.choice(COLOR_PALETTE)  # Random hexadecimal color
+        path_colors[path] = color
+
+    # Create labels for paths (optional)
+    path_labels = {path: f"Path {dc} o{path[0]}" for i, path in enumerate(paths)}
+    
+    # Plot the base network
+    # Create labels for nodes (optional)
+    node_labels = {node: f"{node[0]}\n{node[1]},{node[2]}" for node, data in G.nodes(data=True)}
+    pos = {node: ((node[1]+(node[2]/4)), -int(node[0].split("_")[-1])) for node in G.nodes()}
+
+    plt.figure(figsize=figsize)
+    nx.draw(G, pos, with_labels=False, node_size=1000, node_color='lightblue', edge_color='gray', arrows=True)
+    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
+    
+
+    
+    # Create labels for edges (optional)
+    edge_labels = {(u, v): f"{data['weight']}%u" for u,v, data in G.edges(data=True)}
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10)
+    
+    # Plot the paths on top of the base network
+    legend_elements = []
+    for i, (dc,path) in enumerate(paths):
+        path_edges = [(path[j], path[j + 1]) for j in range(len(path) - 1)]
+        # Add edges to the graph
+        for arc in path_edges:
+            G.add_edge(arc[0], arc[1])
+        path_color = path_colors[path]
+        nx.draw(G.subgraph(path), pos, with_labels=False, node_size=1000, node_color=path_color, edge_color=path_color, width=2, arrows=True, label=path_labels.get(path, f"Path {dc} o{path[0]}"))
+        legend_elements.append(Patch(facecolor=path_color, edgecolor=path_color, 
+                                     label=path_labels.get(path, f"Path {dc} o{path[0]}")))
+
+    plt.legend(handles=legend_elements, loc='upper right')
+
+    # Add path labels to the legend
+#     legend_colors = [path_colors.get(path) for path in paths]
+#     legend_labels = [path_labels.get(path, f"Path {i + 1}") for i, path in enumerate(paths)]
+
+    plt.title("Base Network with Paths")
+    plt.axis('off')
+    
+    if save_name is not None:
+        # Save the plot as an image
+        plt.savefig(fname=f"{save_name}.png", bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+        plt.close()
+
 def plot_base_network_with_paths(base_network, flowarcs, paths, save_name = None, figsize = (16, 8)):
     # Create a copy of the base network for visualization
     G = nx.DiGraph()
@@ -2159,3 +2556,59 @@ def plot_base_network_with_single_commodity(base_network, flowcom_arcs, alphaofn
         plt.close()
 
 
+
+def plot_buildings_on_map(building_df, path_list):
+    us_states = gpd.read_file('cb_2021_us_state_500k/cb_2021_us_state_500k.shp')
+    us_states.to_file('us_states.geojson', driver='GeoJSON')
+    # Create a map centered around the US
+    m = folium.Map(location=[37.7749, -122.4194], zoom_start=4, tiles='cartodb positron')
+    # Add state borders to the map
+    folium.GeoJson(
+        'us_states.geojson',
+        style_function=lambda feature: {
+            'color': 'blue',
+            'weight': 2,
+            'fillOpacity': 0,
+        }
+    ).add_to(m)
+
+    for p in path_list:
+        for (o,d) in p:
+            if (o not in building_df['SLIC'].values):
+                print(f'no coor data of {o}, skip {o}-{d}')
+                continue
+            if (d not in building_df['SLIC'].values):
+                print(f'no coor data of {d}, skip {o}-{d}')
+                continue
+            o_lat,o_lon = building_df.loc[building_df['SLIC']==o][['Lat','Lon']].values[0]
+            d_lat,d_lon = building_df.loc[building_df['SLIC']==d][['Lat','Lon']].values[0]
+
+            # Add an arrow marker at the end of the line
+            folium.Marker(
+                location=(d_lat,d_lon),
+                icon=folium.DivIcon(
+                    icon_size=(20, 20),
+                    icon_anchor=(10, 10),
+                    html='<div style="font-size: 12px; color: blue;">&#x25BA;</div>'
+                )
+            ).add_to(m)
+
+            folium.PolyLine(
+            locations=[(o_lat,o_lon), (d_lat,d_lon)],
+            color='orange',
+            weight=1,
+            ).add_to(m)
+
+    # Iterate through the building data and add markers to the map
+    for building_id, lat, lon in building_df.values:
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=3,
+            color='red',
+            fill=True,
+            fill_color='red',
+            fill_opacity=1,
+            popup=f'Building ID: {building_id}'
+        ).add_to(m)
+        
+    return m

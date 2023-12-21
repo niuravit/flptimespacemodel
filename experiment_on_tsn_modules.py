@@ -50,8 +50,10 @@ def solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, in
     # validate solution
     # mgcpsolver.validate_demand_delivered(flow_arc_mgcp_imp,flow_comarc_mgcp_imp)
     mgcpsolver.validate_demand_delivered(mgcpsolver.flow_arc,mgcpsolver.flowcom_arc)
+    # retrieve path sol
+    mgcp_path_sol = mgcpsolver.convert_arc_sol_to_path_sol(mgcpsolver.flowcom_arc)
     # output solution is stored in self.flow_arc and self.flowcom_arc
-    mgcp_output = (mgcp_obj, mgcpsolver.flow_arc, mgcpsolver.flowcom_arc, mgcp_iter, mgcp_runtime, mgcpsolver.plot_objs) 
+    mgcp_output = (mgcp_obj, mgcpsolver.flow_arc, mgcpsolver.flowcom_arc, mgcp_path_sol, mgcp_iter, mgcp_runtime, mgcpsolver.plot_objs, mgcpsolver.logobjval) 
     return mgcp_output
 
 def solve_adaptive_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, 
@@ -72,17 +74,20 @@ def solve_adaptive_slope_scaling_improvement_from_sol(network, init_flow_arc, in
     print('adaptive (a)ss improving heuristic:{}, imp\%:{}'.format(ss_obj, round(100*(ss_obj-init_obj)/(init_obj),2)) +
           f' (t{round((ss_tcost-it_cost)*100/it_cost,2)}% , s{round((ss_scost-is_cost)*100/is_cost,2)}%)')
     sssolver.validate_demand_duedate_satisfaction(min_sol['path_sol'])
-    ss_output = (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp,path_sol_ass_imp,len(iter_log), iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs)             
+    ss_output = (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp,path_sol_ass_imp,len(iter_log), iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs,iter_log)             
     return ss_output
 
 def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, 
-                                             init_proc_text="",obj_mode = 'step'):
+                                             init_proc_text="",obj_mode = 'step', phases = ['P0']):
     # slope scaling improving heuristics
     flow_arc_ss_imp = deepcopy(init_flow_arc)
     flow_comarc_ss_imp = deepcopy(init_flowcom_arc)
     sssolver = tsmd.SlopeScalingSolver(network, flow_arc_ss_imp, flow_comarc_ss_imp, obj_mode); 
     sssolver.init_proc_text = init_proc_text;
-    min_sol, iter_log = sssolver.concurrent_slope_scalling_with_time_limit(time_limit=time_limit, plot_slope=True)
+    # min_sol, iter_log = sssolver.concurrent_slope_scalling_with_time_limit(time_limit=time_limit, plot_slope=True)
+    min_sol, iter_log = sssolver.concurrent_slope_scalling_multiphase_with_time_limit(time_limit=time_limit,
+                                                                                       plot_slope=True,
+                                                                                       phases = phases)
     flow_arc_ss_imp = min_sol['flow_arc']
     flow_comarc_ss_imp = min_sol['flowcom_arc']
     path_sol_ss_imp = min_sol['path_sol']
@@ -93,7 +98,7 @@ def solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowco
     print('ss improving heuristic:{}, imp\%:{}'.format(ss_obj, round(100*(ss_obj-init_obj)/(init_obj),2)) +
           f' (t{round((ss_tcost-it_cost)*100/it_cost,2)}% , s{round((ss_scost-is_cost)*100/is_cost,2)}%)')
     sssolver.validate_demand_duedate_satisfaction(min_sol['path_sol'])
-    ss_output = (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp,path_sol_ss_imp,len(iter_log),iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs)             
+    ss_output = (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp,path_sol_ss_imp,len(iter_log),iter_log[len(iter_log)-1]['timestamp'], sssolver.plot_objs,iter_log)             
     return ss_output
 
 def get_util_dist_average(flow_arc,distance_matrix,trailer_cap):
@@ -108,12 +113,13 @@ def generate_initial_solution(network, init_mode, obj_mode):
         flow_arc_mgcpinit1,flowcom_arc_mgcpinit1 = mgcpsolver.mgcp_construction(plot_network = False, save_to_img = False)
         it_cost,is_cost = tsmd.get_obj(flow_arc_mgcpinit1, mgcpsolver.distance_matrix, mgcpsolver.trailer_cap, mgcpsolver.handling_cost, mgcpsolver.obj_mode)
         # init_obj = it_cost+is_cost
-        # wait for updating
-        path_sol_mgcpinit1 = {}
+        path_sol_mgcpinit1 = mgcpsolver.convert_arc_sol_to_path_sol(flowcom_arc_mgcpinit1)
         return (it_cost,is_cost), flow_arc_mgcpinit1, flowcom_arc_mgcpinit1,path_sol_mgcpinit1, mgcpsolver.alpha
-    elif (init_mode == "sp"):
+    elif ("sp" in init_mode):
+        init_proc, init_arr_forcing = init_mode.split("_")
         sssolver = tsmd.SlopeScalingSolver(network, {}, {},obj_mode)
-        spp_fa_init, spp_fca_init, spp_path_sol_init = sssolver.get_initial_shortest_path_sol()
+        spp_fa_init, spp_fca_init, spp_path_sol_init = sssolver.get_initial_shortest_path_sol(fixing_intree = True, 
+                                                                                              arrival_forcing = init_arr_forcing)
         it_cost,is_cost = tsmd.get_obj(spp_fa_init, sssolver.distance_matrix, sssolver.trailer_cap, sssolver.handling_cost, sssolver.obj_mode)
         # init_obj = it_cost+is_cost
         return (it_cost,is_cost), spp_fa_init, spp_fca_init, spp_path_sol_init, sssolver.alpha
@@ -153,7 +159,15 @@ def runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit, init
         imp_proc = _temp[0]
         lane_sel_mode = 'vol'
     elif (len(_temp)==2): 
-        (lane_sel_mode,imp_proc) = _temp
+        (mode,imp_proc) = _temp
+        if (imp_proc == 'mgcp'):
+            lane_sel_mode = mode
+        elif (imp_proc == 'ssp'):
+            phase_mode = mode
+            if (phase_mode == "singlephase"):
+                phases = ["P0"]
+            elif (phase_mode == "multiphase"):
+                phases = ["P1","P2","P3","P4"]
     else:
         raise Exception(f"Invalid imp proc mode {imp_proc}")
     
@@ -163,34 +177,30 @@ def runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit, init
                                                       lane_selection_mode = lane_sel_mode ,reflow_mode = "volume_based", 
                                                       obj_mode = obj_mode,
                                                       init_proc_text = init_proc_text)
-        (mgcp_obj,flow_arc_mgcp_imp,flow_comarc_mgcp_imp, mgcp_iter, mgcp_runtime, plot_objs) = mgcp_output
-        # wait for updating
-        path_sol_mgcp_imp = dict()
-        return (flow_arc_mgcp_imp,flow_comarc_mgcp_imp,path_sol_mgcp_imp,mgcp_iter,mgcp_runtime,plot_objs)
+        (mgcp_obj,flow_arc_mgcp_imp,flow_comarc_mgcp_imp,path_sol_mgcp_imp, mgcp_iter, mgcp_runtime, plot_objs,iter_log) = mgcp_output
+        return (flow_arc_mgcp_imp,flow_comarc_mgcp_imp,path_sol_mgcp_imp,mgcp_iter,mgcp_runtime,plot_objs,iter_log)
     elif (imp_proc == "mgcp_w_grasp"):
         # grasp mgcp improving heuristics 
         mgcp_output = solve_mgcp_single_lane_from_sol(network, init_flow_arc, init_flowcom_arc, init_alpha, time_limit,
                                                       lane_selection_mode = lane_sel_mode, reflow_mode = "grasp",
                                                       obj_mode = obj_mode,
                                                       init_proc_text = init_proc_text)
-        # wait for updating
-        path_sol_mgcp_imp = dict()
-        (mgcp_obj,flow_arc_mgcp_imp,flow_comarc_mgcp_imp, mgcp_iter, mgcp_runtime,plot_objs) = mgcp_output
-        return (flow_arc_mgcp_imp,flow_comarc_mgcp_imp,path_sol_mgcp_imp,mgcp_iter,mgcp_runtime,plot_objs)
+        (mgcp_obj,flow_arc_mgcp_imp,flow_comarc_mgcp_imp, path_sol_mgcp_imp, mgcp_iter, mgcp_runtime,plot_objs,iter_log) = mgcp_output
+        return (flow_arc_mgcp_imp,flow_comarc_mgcp_imp,path_sol_mgcp_imp,mgcp_iter,mgcp_runtime,plot_objs,iter_log)
     elif (imp_proc == "ssp"):
         # slope scaling improving heuristics: sc don't need alpha
         ss_output = solve_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit, 
                                                              init_proc_text = init_proc_text,
-                                                             obj_mode = obj_mode,)
-        (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp,path_sol_ss_imp, iter_ss_imp, rtime_ss_imp,plot_objs) = ss_output           
-        return (flow_arc_ss_imp,flow_comarc_ss_imp,path_sol_ss_imp,iter_ss_imp,rtime_ss_imp,plot_objs)
+                                                             obj_mode = obj_mode, phases = phases )
+        (ss_obj,flow_arc_ss_imp,flow_comarc_ss_imp,path_sol_ss_imp, iter_ss_imp, rtime_ss_imp,plot_objs,iter_log) = ss_output           
+        return (flow_arc_ss_imp,flow_comarc_ss_imp,path_sol_ss_imp,iter_ss_imp,rtime_ss_imp,plot_objs,iter_log)
     elif (imp_proc == "assp"):
         # slope scaling improving heuristics: sc don't need alpha
         ass_output = solve_adaptive_slope_scaling_improvement_from_sol(network, init_flow_arc, init_flowcom_arc, time_limit,
                                                                        init_proc_text = init_proc_text,
                                                                        obj_mode = obj_mode,)
-        (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp,path_sol_ss_imp,iter_ass_imp, rtime_ass_imp,plot_objs) = ass_output           
-        return (flow_arc_ass_imp,flow_comarc_ass_imp,path_sol_ss_imp,iter_ass_imp,rtime_ass_imp,plot_objs)
+        (ss_obj,flow_arc_ass_imp,flow_comarc_ass_imp,path_sol_ss_imp,iter_ass_imp, rtime_ass_imp,plot_objs,iter_log) = ass_output           
+        return (flow_arc_ass_imp,flow_comarc_ass_imp,path_sol_ss_imp,iter_ass_imp,rtime_ass_imp,plot_objs,iter_log)
     else:
         raise Exception(f"invalid heuristic algo: {imp_proc}")
 
@@ -240,6 +250,7 @@ def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, init
         # create new log dict for each instance
         log = {}; _logger = logger(log, obj_mode)
         # log statistic of instance
+        log['inst_id'] = i; log['dem_sc'] = demand_scaling_factor; log['s_sc'] = sortc_scaling_factor;
         log['nodes_no'] = len(network.nodes); log['arcs_no'] = len(network.edges);
         log['total_dem'] = round(sum(flatten_dem),2); log['trail_cap'] = TRAILER_CAP
         log['min_dem'] = round(min(flatten_dem),2); log['max_dem'] = round(max(flatten_dem),2); 
@@ -253,6 +264,7 @@ def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, init
             # add-hoc sort-cost scaler adjustment
             print(f"Adjusting sorting cost from {constant_dict['handling_cost']} to {HANDLING_COST}")
             network.handling_cost = HANDLING_COST
+            network.update_phases_for_multi_phases()
             # (it_cost, is_cost), init_fa, init_fca, alpha = generate_initial_solution(network, init_proc, obj_mode)
             _logger.log_initial_solution(network, init_fa, init_fca, init_path_sol, init_proc, init_ct)
 
@@ -270,15 +282,19 @@ def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, init
                     
                 else:
                     print(f"==={itx_ct}: init-proc {init_proc}-{init_ct}, imp-proc {imp_proc}-{imp_ct} ===");print(" ")
-                    (imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, imp_plot_objs) = runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit,
+                    (imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, imp_plot_objs, iter_log) = runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit,
                                                                                         obj_mode = obj_mode, 
                                                                                         init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}" )
+                    _logger.init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}"
                     # imp_fc, imp_fca = ({},{})
                     # wait for updating
                     # imp_path_sol = {}
                     _logger.log_improved_solution(network, imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, (it_cost, is_cost), f"init-{init_proc}-{init_ct}", f"imp-{imp_proc}-{imp_ct}")
                     # save the plot
                     _logger.save_plots(imp_plot_objs,f'{plot_folder}{time_limit}tl')
+                    # save imp log
+                    _logger.save_imp_log(iter_log,f'{plot_folder}{time_limit}tl')
+
         iter_log[itx_ct] = log
     return iter_log
 
@@ -365,6 +381,20 @@ class logger:
         for (name, (fig,ax)) in plot_objs.items():
             plt.savefig(f'{plot_folder}{name}.png', bbox_inches='tight')
             plt.clf()
+    
+    def save_imp_log(self, iter_log, save_folder):
+        file_path = f'{save_folder}{self.init_proc_text}.txt'
+        with open(file_path, 'w') as file:
+            objs = [iter_log[i]['obj'] for i in range(0,len(iter_log)-1)]
+            tcosts = [iter_log[i]['tcost'] for i in range(0,len(iter_log)-1)]
+            scosts = [iter_log[i]['scost'] for i in range(0,len(iter_log)-1)]
+            appcosts = [iter_log[i]['appcost'] for i in range(0,len(iter_log)-1)]
+            # Convert each inner list to a string and write it to the file
+            file.write("objs," +','.join(map(str, objs)) + '\n')
+            file.write("tcosts," +','.join(map(str, tcosts)) + '\n')
+            file.write("scosts," +','.join(map(str, scosts)) + '\n')
+            file.write("appcosts," +','.join(map(str, appcosts)) + '\n')
+
     
     def save_instance(self, instance, file_path):
         with open(file_path, 'wb') as file:
