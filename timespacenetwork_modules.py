@@ -1500,6 +1500,7 @@ class SlopeScalingSolver:
         processed_phases = []
         # get initial phase to work on
         curr_phase = phases.pop(0)
+        phase_cnt = 1
         processed_phases.append(curr_phase)
         updating_edges = []
         cur_total_edge_size = len(self.edge_set[curr_phase])
@@ -1593,15 +1594,19 @@ class SlopeScalingSolver:
             else:
                 phase_tol_icnt[curr_phase] = 0 
             
-            if ((phase_tol_icnt[curr_phase] >= 10) and (len(phases)>0)):
+            # two either or conditions: tol met of time limit met (give timelimit evenly to each phase)
+            phase_time_lim = ((time.time()-start_timer) > (time_limit*phase_cnt/4))
+            phase_tol_limt = (phase_tol_icnt[curr_phase] >= 10) 
+            if ((phase_tol_limt or phase_time_lim) and (len(phases)>0)):
                 if (len(updating_edges) < cur_total_edge_size):
-                    print(f"Tolerance met, add all edges of curr phases: {len(updating_edges)}/{cur_total_edge_size}")
+                    print(f"PhaseTol {phase_tol_limt} - PhaseTimeLim {phase_time_lim} met, add all edges of curr phases: {len(updating_edges)}/{cur_total_edge_size}")
                     # reset the flag and tol cnt
                     release_all_edges_flag = True
                     phase_tol_icnt[curr_phase] = 0 
                 else:
                     print(f"Tolerance met, and all edges included. Phase changes: Changing phase from {curr_phase} to {phases[0]}")
                     curr_phase = phases.pop(0)
+                    phase_cnt += 1
                     processed_phases.append(curr_phase)
                     cur_total_edge_size = len(set([tuple(e) for p in processed_phases for e in self.edge_set[p]]))
             
