@@ -213,8 +213,10 @@ def _demand_scaler(network, scaler):
     print(f'Done scaling all demand by a factor of {scaler}');
     
 
-
-def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, initialization_list, imp_heuristics_list,
+'''
+fix single instance experiment
+'''
+def fixInstanceExperiment(inst, inst_name, inst_id, constant_dict, initialization_list, imp_heuristics_list,
                           iter_log = None, 
                           time_limit = 120, 
                           demand_scaling_factor = 1,
@@ -237,65 +239,63 @@ def fixInstanceExperiment(inst_list,inst_name_list, inst_id, constant_dict, init
     else:
         itx_ct = len(iter_log)
         
-    for i in range(len(inst_list)):
-        inst = inst_list[i]
-        itx_ct+=1  
-        travel_hr_matrix = dict([(e,inst['distance_matrix'][e]/velocity) for e in inst['distance_matrix']])
-        # generate time-expanded network from instance
-        network = tsmd.TimeExpandedNetwork(inst, num_days, periods_per_day, hub_capacity, travel_hr_matrix, 
-                                   simplified_sort_label,TRAILER_CAP, HANDLING_COST)
-        network.remove_infeasible_demand()
-        _demand_scaler(network, demand_scaling_factor);
-        flatten_dem = [network.demand_by_fc[dc][a] for dc in network.demand_by_fc for a in network.demand_by_fc[dc]]
-        # create new log dict for each instance
-        log = {}; _logger = logger(log, obj_mode)
-        # log statistic of instance
-        log['inst_id'] = i; log['dem_sc'] = demand_scaling_factor; log['s_sc'] = sortc_scaling_factor;
-        log['nodes_no'] = len(network.nodes); log['arcs_no'] = len(network.edges);
-        log['total_dem'] = round(sum(flatten_dem),2); log['trail_cap'] = TRAILER_CAP
-        log['min_dem'] = round(min(flatten_dem),2); log['max_dem'] = round(max(flatten_dem),2); 
-        
-        # initialize the feasible solution
-        init_ct = 0
-        for init_proc in initialization_list:
-            init_ct+=1
-            # get initial solution: either newly generated or presaved init solution
-            (it_cost, is_cost), init_fa, init_fca, init_path_sol, alpha, network = get_initial_solution(init_proc, save_instance_path, demand_scaling_factor, inst_name_list[i], network, obj_mode)
-            # add-hoc sort-cost scaler adjustment
-            print(f"Adjusting sorting cost from {constant_dict['handling_cost']} to {HANDLING_COST}")
-            network.handling_cost = HANDLING_COST
-            network.update_phases_for_multi_phases()
-            # (it_cost, is_cost), init_fa, init_fca, alpha = generate_initial_solution(network, init_proc, obj_mode)
-            _logger.log_initial_solution(network, init_fa, init_fca, init_path_sol, init_proc, init_ct)
+    itx_ct+=1  
+    travel_hr_matrix = dict([(e,inst['distance_matrix'][e]/velocity) for e in inst['distance_matrix']])
+    # generate time-expanded network from instance
+    network = tsmd.TimeExpandedNetwork(inst, num_days, periods_per_day, hub_capacity, travel_hr_matrix, 
+                                simplified_sort_label,TRAILER_CAP, HANDLING_COST)
+    network.remove_infeasible_demand()
+    _demand_scaler(network, demand_scaling_factor);
+    flatten_dem = [network.demand_by_fc[dc][a] for dc in network.demand_by_fc for a in network.demand_by_fc[dc]]
+    # create new log dict for each instance
+    log = {}; _logger = logger(log, obj_mode)
+    # log statistic of instance
+    log['inst_id'] = inst_id; log['dem_sc'] = demand_scaling_factor; log['s_sc'] = sortc_scaling_factor;
+    log['nodes_no'] = len(network.nodes); log['arcs_no'] = len(network.edges);
+    log['total_dem'] = round(sum(flatten_dem),2); log['trail_cap'] = TRAILER_CAP
+    log['min_dem'] = round(min(flatten_dem),2); log['max_dem'] = round(max(flatten_dem),2); 
+    
+    # initialize the feasible solution
+    init_ct = 0
+    for init_proc in initialization_list:
+        init_ct+=1
+        # get initial solution: either newly generated or presaved init solution
+        (it_cost, is_cost), init_fa, init_fca, init_path_sol, alpha, network = get_initial_solution(init_proc, save_instance_path, demand_scaling_factor, inst_name, network, obj_mode)
+        # add-hoc sort-cost scaler adjustment
+        print(f"Adjusting sorting cost from {constant_dict['handling_cost']} to {HANDLING_COST}")
+        network.handling_cost = HANDLING_COST
+        network.update_phases_for_multi_phases()
+        # (it_cost, is_cost), init_fa, init_fca, alpha = generate_initial_solution(network, init_proc, obj_mode)
+        _logger.log_initial_solution(network, init_fa, init_fca, init_path_sol, init_proc, init_ct)
 
-            imp_ct = 0
-            # run improving heuristics
-            for imp_proc in imp_heuristics_list:
-                imp_ct+=1
-                # special mode add for saving init_sol of big instance: 50n
-                if (imp_proc == "save_init_sol"):
-                     __pack_instance_obj_and_save(_logger, log, obj_mode, 
-                                                  it_cost, is_cost, init_fca, init_path_sol,
-                                                  alpha, network, 
-                                                  demand_scaling_factor, init_proc, 
-                                                  save_instance_path, inst_name_list[i])
-                    
-                else:
-                    print(f"==={itx_ct}: init-proc {init_proc}-{init_ct}, imp-proc {imp_proc}-{imp_ct} ===");print(" ")
-                    (imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, imp_plot_objs, iter_log) = runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit,
-                                                                                        obj_mode = obj_mode, 
-                                                                                        init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}" )
-                    _logger.init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}"
-                    # imp_fc, imp_fca = ({},{})
-                    # wait for updating
-                    # imp_path_sol = {}
-                    _logger.log_improved_solution(network, imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, (it_cost, is_cost), f"init-{init_proc}-{init_ct}", f"imp-{imp_proc}-{imp_ct}")
-                    # save the plot
-                    _logger.save_plots(imp_plot_objs,f'{plot_folder}{time_limit}tl')
-                    # save imp log
-                    _logger.save_imp_log(iter_log,f'{plot_folder}{time_limit}tl')
+        imp_ct = 0
+        # run improving heuristics
+        for imp_proc in imp_heuristics_list:
+            imp_ct+=1
+            # special mode add for saving init_sol of big instance: 50n
+            if (imp_proc == "save_init_sol"):
+                    __pack_instance_obj_and_save(_logger, log, obj_mode, 
+                                                it_cost, is_cost, init_fca, init_path_sol,
+                                                alpha, network, 
+                                                demand_scaling_factor, init_proc, 
+                                                save_instance_path, inst_name)
+                
+            else:
+                print(f"==={itx_ct}: init-proc {init_proc}-{init_ct}, imp-proc {imp_proc}-{imp_ct} ===");print(" ")
+                (imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, imp_plot_objs, iter_log) = runimprovement(network, init_fa, init_fca, alpha, imp_proc, time_limit,
+                                                                                    obj_mode = obj_mode, 
+                                                                                    init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}" )
+                _logger.init_proc_text = f"inst{inst_id}-init{init_proc}{init_ct}-imp{imp_proc}{imp_ct}"
+                # imp_fc, imp_fca = ({},{})
+                # wait for updating
+                # imp_path_sol = {}
+                _logger.log_improved_solution(network, imp_fa, imp_fca, imp_path_sol, imp_iter, imp_rtime, (it_cost, is_cost), f"init-{init_proc}-{init_ct}", f"imp-{imp_proc}-{imp_ct}")
+                # save the plot
+                _logger.save_plots(imp_plot_objs,f'{plot_folder}{time_limit}tl')
+                # save imp log
+                _logger.save_imp_log(iter_log,f'{plot_folder}{time_limit}tl')
 
-        iter_log[itx_ct] = log
+    iter_log[itx_ct] = log
     return iter_log
 
 def __pack_instance_obj_and_save(logger, log, obj_mode, it_cost, is_cost, init_fca, init_path_sol, alpha, network, demand_scaling_factor, init_proc, save_instance_path, inst_name):

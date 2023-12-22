@@ -217,7 +217,7 @@ for demand_scaler in demand_scaler_list:
         for i in instance_id_list:
             result_file_name = f"{time_stamp}{name_suff}_log"
             print(f'Staring fixInstanceExperiment... instance {inst_size}n, id {i}, d-sc{demand_scaler}, s-sc{sort_scaler}')
-            i_log = exp.fixInstanceExperiment(inst_list[i:i+1],inst_names[i:i+1], i, constant_dict, initialization_list, imp_heuristics_list, 
+            i_log = exp.fixInstanceExperiment(inst_list[i],inst_names[i], i, constant_dict, initialization_list, imp_heuristics_list, 
                                             time_limit=time_lim, demand_scaling_factor = demand_scaler, sortc_scaling_factor = sort_scaler, obj_mode = obj_func,
                                             plot_folder=plot_subfolder, save_instance_path = init_sol_path)
             log_collection[exp_uid] = i_log[1]

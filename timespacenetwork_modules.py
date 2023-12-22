@@ -302,26 +302,6 @@ def update_alpha_path_based_solution(path_sol, alpha):
 def convert_node_path_to_arc_path(npath):
     return [(npath[i],npath[i+1]) for i in range(len(npath)-1)]
 
-class MultiHeuristicSolver:
-    def __init__(self, network,flow_arc,flowcom_arc, alpha, obj_mode):
-        self.network = network
-        self.flow_arc = flow_arc
-        self.flowcom_arc = flowcom_arc
-        self.distance_matrix = network.distance_matrix
-        self.trailer_cap = network.trailer_cap
-        self.handling_cost = network.handling_cost
-        self.deleted_demand = []
-        self.alpha = alpha
-        self.obj_mode = obj_mode
-        self.logobjval = {}
-
-        # some text for labeling the graph
-        self.init_proc_text = ""
-
-        # plot objs
-        self.plot_objs = {}
-
-
 class MarginalCostPathSolver:
     def __init__(self, network,flow_arc,flowcom_arc, alpha, obj_mode):
         self.network = network
@@ -334,6 +314,8 @@ class MarginalCostPathSolver:
         self.alpha = alpha
         self.obj_mode = obj_mode
         self.logobjval = {}
+        self.tcost, self.scost = get_obj(self.flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
+        self.init_obj = self.tcost + self.scost
 
         # some text for labeling the graph
         self.init_proc_text = ""
@@ -606,7 +588,18 @@ class MarginalCostPathSolver:
         print(f'MGCP single lane w timelimit {time_limit}, mode {lane_selection_mode}-{reflow_mode}, total #lanes: {lane_num}')
         hit_limit_in_for = False
         iteration = 0
-        old_cost = 0                                                
+        # initial cost
+        self.logobjval[iteration] = sum(get_obj(self.flow_arc,self.distance_matrix,self.trailer_cap,self.handling_cost,self.obj_mode))
+        self.logobjval = dict()
+        self.logobjval[0] = {
+                        'flow_arc': self.flow_arc,
+                        'flowcom_arc': self.flowcom_arc,
+                        'obj': self.init_obj,
+                        'appcost': self.init_obj,
+                        'tcost': self.tcost,
+                        'scost': self.scost
+                    }
+        old_cost = self.init_obj                                                
         while ((time.time()-start_timer)< time_limit):
             for (a,_) in sorted_target_arcs:
                 if ((time.time()-start_timer)> time_limit): 
@@ -615,19 +608,25 @@ class MarginalCostPathSolver:
                     print("Zero flow, skip!!")
                     continue
                 iteration+=1
-                # different modes  
-                cost = self.mgcp_single_lane_improvement(a, reflow_mode)
+                # different mode
+                tcost,scost = self.mgcp_single_lane_improvement(a, reflow_mode)
                 # if (reflow_mode == "default"):
                 #     cost = self.mgcp_single_lane_improvement(a,)
                 # elif (reflow_mode == "grasp"):
                 #     cost = self.mgcp_single_lane_improvement_with_grasp(a,)
                 # else:
                 #     raise Exception(f"{reflow_mode} is invalid mode for mgcp single lane improvement")
-                self.logobjval[iteration] = cost
+                self.logobjval[iteration] = dict()
+                self.logobjval[iteration]['obj'] = tcost + scost
+                self.logobjval[iteration]['tcost'] = tcost
+                self.logobjval[iteration]['scost'] = scost
+                self.logobjval[iteration]['appcost'] = tcost + scost # for mgcp, app = real cost
+                self.logobjval[iteration]['timestamp'] = time.time() - start_timer
+
 
             if (hit_limit_in_for): break;
-            if (abs(old_cost-cost)<1e-5): print('Obj not change!'); break
-            old_cost = cost
+            if (abs(old_cost-(tcost + scost))<1e-5): print('Obj not change!'); break
+            old_cost = tcost + scost
         runtime = (time.time()-start_timer)
         #### Plot stats
         if (plot_obj):
@@ -647,7 +646,7 @@ class MarginalCostPathSolver:
             line_stl = "--"
             # m = 'o'
 
-        se_afmgcp_cost = pd.Series(iter_log.values())
+        se_afmgcp_cost = pd.Series([v['obj'] for v in iter_log.values()])
         ax.plot(se_afmgcp_cost, color=line_color, linestyle = line_stl,label=f"{self.init_proc_text}-obj")
         ax.legend(loc="upper left", bbox_to_anchor=(1,1))
         ax.set_xlabel("iterations",  size = 20)
@@ -683,25 +682,6 @@ class MarginalCostPathSolver:
                 # print(f'sorted_vol_dc: {sorted_volume_based_dc}')
                 # print(f'grasp_vol_dc: {grasp_volume_based_dc}')
                 return grasp_volume_based_dc
-
-            '''
-            old replication implementation
-            # prevent exception when size of dc is small
-            # t = min(shuffling_ele, len(sorted_volume_based_dc))
-            # replications = []
-            # for i in range(num_replication):
-            #     replication = sorted_volume_based_dc.copy()
-            #     # set different seed to get different result
-            #     random.seed(i)
-            #     # retrive and suffle the first t elements
-            #     shuffled_part = replication[:t]
-            #     random.shuffle(shuffled_part)
-            #     # replace the first t elements with shuffled one
-            #     replication[:t] = shuffled_part
-            #     # append to the storage
-            #     replications.append(replication)
-            # return replications
-            '''
         else:
             raise Exception("Invalid mode")
 
@@ -761,7 +741,6 @@ class MarginalCostPathSolver:
         aft_cost,afs_cost = get_obj(self.flow_arc, self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
         cost_af_repath = aft_cost + afs_cost
         print(f'Lane {lane_arc}, objmode {self.obj_mode}, cost-change: {round(cost_added+cost_removed,3)} (recheck cost-change: {round(cost_af_repath-o_cost,3)}) ({round((cost_added+cost_removed)*100/(o_cost),2)} %)')
-
         if (cost_added+cost_removed<=-1e-5):
             # update alpha
             for (dc,f) in dc_sequence: 
@@ -781,9 +760,7 @@ class MarginalCostPathSolver:
                 readd_path = dc_removed_path[dc]
                 self.add_flow_to_path(f,dc,readd_path,self.flow_arc,self.flowcom_arc)
             aft_cost,afs_cost = get_obj(self.flow_arc,self.distance_matrix, self.trailer_cap, self.handling_cost, self.obj_mode)
-            cost_af_repath = aft_cost + afs_cost
-
-        return cost_af_repath
+        return aft_cost,afs_cost
     
     def get_path_solution_by_od_commodity(self, flow_arc=None, flowcom_arc=None):
         if (flow_arc == None) and (flowcom_arc == None):
