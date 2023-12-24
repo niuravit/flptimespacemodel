@@ -936,7 +936,6 @@ class MarginalCostPathSolver:
         for dc in self.network.demand_by_fc:
             if (dc_cnt % int(0.1*no_dc) == 0):
                 print(f'reconstructed paths done for {dc_cnt}/{no_dc} dcs')
-
             for org_h in self.network.demand_by_fc[dc]:
                 flow = self.network.demand_by_fc[dc][org_h]
                 dco_key = (dc, org_h)
@@ -944,7 +943,6 @@ class MarginalCostPathSolver:
                 path = self.find_downstream_path(org_h,dc[0],dc,flowcom_arc)
                 path_sol[dco_key] = (flow, path)
             dc_cnt+=1
-
         return path_sol
             
     def validate_intree_violation(self, flow_arc=None, flowcom_arc=None):
@@ -1475,6 +1473,7 @@ class SlopeScalingSolver:
         phase_tol_flg = {p:False for p in phases}
         phase_tol_icnt = {p:0 for p in phases}
         processed_phases = []
+        allphase_cnt = len(phases)
         # get initial phase to work on
         curr_phase = phases.pop(0)
         phase_cnt = 1
@@ -1572,7 +1571,7 @@ class SlopeScalingSolver:
                 phase_tol_icnt[curr_phase] = 0 
             
             # two either or conditions: tol met of time limit met (give timelimit evenly to each phase)
-            phase_time_lim = ((time.time()-start_timer) > (time_limit*phase_cnt/4))
+            phase_time_lim = ((time.time()-start_timer) > (time_limit*phase_cnt/allphase_cnt))
             phase_tol_limt = (phase_tol_icnt[curr_phase] >= 10) 
             if ((phase_tol_limt or phase_time_lim) and (len(phases)>0)):
                 if (len(updating_edges) < cur_total_edge_size):
