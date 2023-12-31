@@ -200,9 +200,9 @@ json_output_name = f"{batch_name}-jsonconfig"
 print(batch_name)
 log_collection = dict()
 result_folder = "playgrounddump/"
-result_subfolder = f"{result_folder}/{batch_name}/"
+result_subfolder = f"{result_folder}{batch_name}/"
 plot_folder = "plots/"
-plot_subfolder = f"{plot_folder}/{batch_name}/"
+plot_subfolder = f"{plot_folder}{batch_name}/"
 
 
 # create result and plot folders
