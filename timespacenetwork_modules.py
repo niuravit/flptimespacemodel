@@ -27,8 +27,6 @@ import concurrent.futures
 import heapq
 
 import folium
-import geopandas as gpd
-import geopy
 
 from collections import defaultdict
 
