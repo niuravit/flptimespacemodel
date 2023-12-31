@@ -162,7 +162,7 @@ def create_folder_if_not_exist(folder):
     if not(os.path.exists(folder)):
         # If it doesn't exist, create the folder
         print(f"Folder '{folder}' not exists, create a new one!")
-        os.makedirs(folder)
+        os.makedirs(folder,exist_ok=True)
         
     else:
         print(f"Folder '{folder}' already exists.")
