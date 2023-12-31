@@ -1,4 +1,4 @@
-import networkx as nx
+# import networkx as nx
 import sys
 import importlib
 import os
@@ -159,10 +159,11 @@ class experiment_configuration:
         return rearrange_col
 
 def create_folder_if_not_exist(folder):
-    if not os.path.exists(folder):
+    if not(os.path.exists(folder)):
         # If it doesn't exist, create the folder
+        print(f"Folder '{folder}' not exists, create a new one!")
         os.makedirs(folder)
-        print(f"Folder '{folder}' created.")
+        
     else:
         print(f"Folder '{folder}' already exists.")
 
